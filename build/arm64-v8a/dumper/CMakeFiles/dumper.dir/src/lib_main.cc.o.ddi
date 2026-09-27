@@ -1,0 +1,9 @@
+{
+  "revision": 0,
+  "rules": [
+    {
+      "primary-output": "dumper\\CMakeFiles\\dumper.dir\\src\\lib_main.cc.o"
+    }
+  ],
+  "version": 1
+}

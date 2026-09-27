@@ -1,0 +1,10 @@
+{
+    "clangd.arguments": [
+        "-clang-tidy",
+        "--enable-config",
+        "-compile-commands-dir=build/arm64-v8a",
+        "-j=4",
+        "--background-index",
+        "--pch-storage=memory",
+    ],
+}

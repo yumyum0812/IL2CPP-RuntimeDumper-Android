@@ -1,0 +1,30 @@
+{
+    "tasks": [
+        {
+            "label": "Clean",
+            "type": "shell",
+            "command": "python scripts/clean.py",
+        },
+        {
+            "label": "Configure",
+            "type": "shell",
+            "command": "python scripts/configure.py",
+        },
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "python scripts/build.py",
+        },
+        {
+            "label": "Push",
+            "type": "shell",
+            "command": "python scripts/push.py",
+        },
+        {
+            "label": "Inject",
+            "type": "shell",
+            "command": "python scripts/inject.py",
+        },
+    ],
+    "version": "2.0.0"
+}

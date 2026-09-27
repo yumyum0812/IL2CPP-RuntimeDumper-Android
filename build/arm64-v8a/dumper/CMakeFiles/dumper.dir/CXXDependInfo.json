@@ -1,0 +1,30 @@
+{
+	"bmi-installation" : null,
+	"compiler-frontend-variant" : "GNU",
+	"compiler-id" : "Clang",
+	"compiler-simulate-id" : "",
+	"config" : "Debug",
+	"cxx-modules" : {},
+	"database-info" : null,
+	"dir-cur-bld" : "C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/build/arm64-v8a/dumper",
+	"dir-cur-src" : "C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper",
+	"dir-top-bld" : "C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/build/arm64-v8a",
+	"dir-top-src" : "C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2",
+	"exports" : [],
+	"forward-modules-from-target-dirs" : [],
+	"include-dirs" : 
+	[
+		"C:\\Users\\unchi\\Workbench\\Android-Native-Projects\\RuntimeDumper2\\xdl-static\\include"
+	],
+	"language" : "CXX",
+	"linked-target-dirs" : [],
+	"module-dir" : "C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/build/arm64-v8a/dumper/CMakeFiles/dumper.dir",
+	"sources" : 
+	{
+		"dumper/CMakeFiles/dumper.dir/src/lib_main.cc.o" : 
+		{
+			"language" : "CXX",
+			"source" : "C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/lib_main.cc"
+		}
+	}
+}
