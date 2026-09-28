@@ -118,7 +118,7 @@ namespace Dumper {
 
             std::string res;
 
-            auto dt = klass->GetDeclaringType();
+            auto dt = klass->GetDeclaringClass();
             if (dt)
                 res += FormatTypeName(dt->GetType(), def) + ".";
             

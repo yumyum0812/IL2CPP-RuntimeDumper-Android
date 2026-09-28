@@ -91,7 +91,7 @@ namespace Dumper::Api {
             return Functions::il2cpp_class_get_type(this);
         }
 
-        Class* GetDeclaringType() {
+        Class* GetDeclaringClass() {
             return Functions::il2cpp_class_get_declaring_type(this);
         }
 
