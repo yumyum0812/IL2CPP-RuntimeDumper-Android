@@ -12,7 +12,7 @@ namespace Dumper::Api {
             return {s ? s : ""};
         }
 
-        int GetType() {
+        int GetTypeEnum() {
             return Functions::il2cpp_type_get_type(this);
         }
 

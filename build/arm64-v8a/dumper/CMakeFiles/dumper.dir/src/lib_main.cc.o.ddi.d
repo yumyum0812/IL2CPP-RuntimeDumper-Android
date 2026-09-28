@@ -932,6 +932,7 @@ dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o.ddi: \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/domain.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/string.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/array.h \
+  C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/property.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/jni_util/android_util.h \
   C:/AndroidSdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/jni.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/jni_util/jni_util.h \

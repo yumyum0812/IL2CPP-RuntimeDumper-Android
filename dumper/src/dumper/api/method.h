@@ -38,6 +38,10 @@ namespace Dumper::Api {
             return Functions::il2cpp_method_is_generic(this);
         }
 
+        bool IsInflated() {
+            return Functions::il2cpp_method_is_inflated(this);
+        }
+
         template<typename R, typename... A>
         R Invoke(A... args) {
             return ((R(*)(A...))methodPtr)(std::forward<A>(args)...);
@@ -65,6 +69,10 @@ namespace Dumper::Api {
 
             void* exc = nullptr;
             return Functions::il2cpp_runtime_invoke(this, obj, paramArray, &exc);
+        }
+
+        Object* GetObject() {
+            return Functions::il2cpp_method_get_object(this);
         }
     };
 }

@@ -13,12 +13,12 @@ namespace Dumper::Api {
     struct Assembly;
     struct Image;
     struct Type;
-    struct Class;
     struct Field;
     struct Method;
+    struct Property;
+    struct Class;
     struct Object;
     struct Array;
-    struct Property;
     struct String;
 }
 
@@ -102,6 +102,7 @@ namespace Dumper::Api::Functions {
     DUMPER_API_DEF(il2cpp_class_is_valuetype, bool(Class* klass));
     DUMPER_API_DEF(il2cpp_class_is_enum, bool(Class* klass));
     DUMPER_API_DEF(il2cpp_class_enum_basetype, Type*(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_instance_size, uintptr_t(Class* klass));
 
     DUMPER_API_DEF(il2cpp_field_get_name, const char*(Field* field));
     DUMPER_API_DEF(il2cpp_field_get_type, Type*(Field* field));
@@ -116,6 +117,8 @@ namespace Dumper::Api::Functions {
     DUMPER_API_DEF(il2cpp_method_get_param_name, const char*(Method* method, size_t index));
     DUMPER_API_DEF(il2cpp_method_get_flags, int(Method* method, uint32_t* iflags));
     DUMPER_API_DEF(il2cpp_method_is_generic, bool(Method* method));
+    DUMPER_API_DEF(il2cpp_method_is_inflated, bool(Method* method));
+    DUMPER_API_DEF(il2cpp_method_get_object, Object*(Method* method));
 
     DUMPER_API_DEF(il2cpp_type_get_name, const char*(Type* typ));
     DUMPER_API_DEF(il2cpp_type_get_type, int(Type* typ));

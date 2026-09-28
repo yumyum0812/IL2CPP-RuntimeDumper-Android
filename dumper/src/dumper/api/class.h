@@ -110,5 +110,9 @@ namespace Dumper::Api {
         Type* GetEnumBaseType() {
             return Functions::il2cpp_class_enum_basetype(this);
         }
+
+        int32_t GetInstanceSize() {
+            return Functions::il2cpp_class_instance_size(this);
+        }
     };
 }
