@@ -5,6 +5,7 @@
 #include "functions.h"
 #include "field.h"
 #include "method.h"
+#include "type.h"
 
 namespace Dumper::Api {
     struct Class {
@@ -22,8 +23,8 @@ namespace Dumper::Api {
             std::vector<Method*> vec;
 
             void* iter = nullptr;
-            while (void* met = Functions::il2cpp_class_get_methods(this, &iter)) {
-                vec.push_back((Method*) met);
+            while (auto met = Functions::il2cpp_class_get_methods(this, &iter)) {
+                vec.push_back(met);
             }
 
             return vec;
@@ -33,11 +34,81 @@ namespace Dumper::Api {
             std::vector<Field*> vec;
 
             void* iter = nullptr;
-            while (void* met = Functions::il2cpp_class_get_fields(this, &iter)) {
-                vec.push_back((Field*) met);
+            while (auto fld = Functions::il2cpp_class_get_fields(this, &iter)) {
+                vec.push_back(fld);
             }
 
             return vec;
+        }
+
+        std::vector<Property*> GetProperties() {
+            std::vector<Property*> vec;
+
+            void* iter = nullptr;
+            while (auto prop = Functions::il2cpp_class_get_properties(this, &iter)) {
+                vec.push_back(prop);
+            }
+
+            return vec;
+        }
+
+        std::vector<Class*> GetInterfaces() {
+            std::vector<Class*> vec;
+
+            void* iter = nullptr;
+            while (auto v = Functions::il2cpp_class_get_interfaces(this, &iter)) {
+                vec.push_back(v);
+            }
+
+            return vec;
+        }
+
+        Class* GetParent() {
+            return Functions::il2cpp_class_get_parent(this);
+        }
+
+        static Class* FromType(Type* typ) {
+            return Functions::il2cpp_class_from_type(typ);
+        }
+
+        static Class* FromSystemType(Object* typ) {
+            return Functions::il2cpp_class_from_system_type(typ);
+        }
+
+        bool IsGeneric() {
+            return Functions::il2cpp_class_is_generic(this);
+        }
+
+        bool IsInflated() {
+            return Functions::il2cpp_class_is_inflated(this);
+        }
+
+        Class* GetElementClass() {
+            return Functions::il2cpp_class_get_element_class(this);
+        }
+
+        Type* GetType() {
+            return Functions::il2cpp_class_get_type(this);
+        }
+
+        Class* GetDeclaringType() {
+            return Functions::il2cpp_class_get_declaring_type(this);
+        }
+
+        int GetFlags() {
+            return Functions::il2cpp_class_get_flags(this);
+        }
+
+        bool IsEnum() {
+            return Functions::il2cpp_class_is_enum(this);
+        }
+
+        bool IsValueType() {
+            return Functions::il2cpp_class_is_valuetype(this);
+        }
+
+        Type* GetEnumBaseType() {
+            return Functions::il2cpp_class_enum_basetype(this);
         }
     };
 }

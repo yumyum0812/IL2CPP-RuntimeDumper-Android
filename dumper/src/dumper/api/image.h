@@ -22,11 +22,15 @@ namespace Dumper::Api {
             std::vector<Class*> ret;
             ret.reserve(count);
             for (int i = 0; i < count; i++) {
-                Class* c = (Class*) Functions::il2cpp_image_get_class(this, i);
+                Class* c = Functions::il2cpp_image_get_class(this, i);
                 ret.push_back(c);
             }
 
             return ret;
+        }
+
+        Class* FindClass(const std::string& ns, const std::string& nm) {
+            return Functions::il2cpp_class_from_name(this, ns.c_str(), nm.c_str());
         }
     };
 }

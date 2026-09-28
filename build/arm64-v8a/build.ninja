@@ -82,7 +82,7 @@ build dumper/CMakeFiles/dumper.dir/src/lib_main.cc.o.ddi: CXX_SCAN__dumper_Debug
   DEFINES = -Ddumper_EXPORTS
   DEP_FILE = dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o.ddi.d
   DYNDEP_INTERMEDIATE_FILE = dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o.ddi
-  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -s -Qunused-arguments -fno-limit-debug-info  -std=c++20 -fPIC
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC
   INCLUDES = -IC:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/xdl-static/include
   OBJ_FILE = dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o
   PREPROCESSED_OUTPUT_FILE = dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o.ddi.i
@@ -92,7 +92,7 @@ build dumper/CMakeFiles/dumper.dir/src/lib_main.cc.o: CXX_COMPILER__dumper_scann
   DEFINES = -Ddumper_EXPORTS
   DEP_FILE = dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o.d
   DYNDEP_MODULE_MAP_FILE = dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o.modmap
-  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -s -Qunused-arguments -fno-limit-debug-info  -std=c++20 -fPIC
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -std=c++20 -fPIC
   INCLUDES = -IC:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/xdl-static/include
   OBJECT_DIR = dumper\CMakeFiles\dumper.dir
   OBJECT_FILE_DIR = dumper\CMakeFiles\dumper.dir\src
@@ -112,7 +112,7 @@ build dumper/CMakeFiles/dumper.dir/CXX.dd | dumper/CMakeFiles/dumper.dir/CXXModu
 build dumper/libdumper.so: CXX_SHARED_LIBRARY_LINKER__dumper_Debug dumper/CMakeFiles/dumper.dir/src/lib_main.cc.o | xdl-static/libxdl-static.a || xdl-static/libxdl-static.a
   CONFIG = Debug
   DEP_FILE = dumper\CMakeFiles\dumper.dir\link.d
-  LANGUAGE_COMPILE_FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -s -Qunused-arguments -fno-limit-debug-info
+  LANGUAGE_COMPILE_FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info
   LINK_FLAGS = -shared -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments -Xlinker --dependency-file=dumper\CMakeFiles\dumper.dir\link.d
   LINK_LIBRARIES = -landroid  -llog  xdl-static/libxdl-static.a  -latomic -lm
   OBJECT_DIR = dumper\CMakeFiles\dumper.dir

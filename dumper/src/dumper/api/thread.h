@@ -7,7 +7,7 @@
 namespace Dumper::Api {
     struct Thread {
         static Thread* Attach(Domain* domain) {
-            return (Thread*) Functions::il2cpp_thread_attach(domain);
+            return Functions::il2cpp_thread_attach(domain);
         }
 
         void Detach() {

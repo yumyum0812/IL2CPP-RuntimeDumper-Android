@@ -2,151 +2,236 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <thread>
 #include <xdl.h>
 #include "../log.h"
 
+namespace Dumper::Api {
+    struct Domain;
+    struct Thread;
+    struct Assembly;
+    struct Image;
+    struct Type;
+    struct Class;
+    struct Field;
+    struct Method;
+    struct Object;
+    struct Array;
+    struct Property;
+    struct String;
+}
 
 namespace Dumper::Api::Functions {
-    struct ApiFuncBase {
-        virtual ~ApiFuncBase() = default;
+    struct _IApiCall {
+        virtual ~_IApiCall() = default;
 
-        virtual bool valid() const = 0;
-        virtual std::string_view name() const = 0;
+        virtual bool Valid() const = 0;
+        virtual std::string Name() const = 0;
+        virtual void Assign(void* ptr) = 0;
+        virtual void* GetAddr() = 0;
     };
 
-    template <typename R, typename... A>
-    struct ApiFunc;
+    inline std::vector<_IApiCall*> _apiCalls{};
 
     template <typename R, typename... A>
-    class ApiFunc<R(A...)> : public ApiFuncBase {
-        const std::string _name;
-        mutable R (* fn)(A...) = nullptr;
+    struct _ApiCall;
+
+    template <typename R, typename... A>
+    class _ApiCall<R(A...)> : public _IApiCall {
+        std::string _name;
+        R (* fn)(A...) = nullptr;
         
     public:
-        consteval ApiFunc(std::string_view name): _name(name) {}
+        _ApiCall(std::string_view name): _name(name) {
+            _apiCalls.push_back(this);
+        }
 
-        bool valid() const override {
+        bool Valid() const override {
             return fn != nullptr;
         }
 
-        std::string_view name() const override {
-            return _name;
+        std::string Name() const override {
+            return std::string(_name);
         }
 
-        R operator() (A... a) {
-            return fn(a...);
+        void Assign(void* ptr) override {
+            fn = reinterpret_cast<R(*)(A...)>(ptr);
         }
 
-        ApiFunc& operator=(R (*ptr)(A...)) {
-            fn = ptr;
-            return *this;
+        R operator() (A... a) const {
+            return fn(std::forward<A>(a)...);
+        }
+
+        void* GetAddr() override {
+            return (void*) fn;
         }
     };
 
-    ApiFunc<void(int a)> il2cpp_domain_get2("il2cpp_domain_get");
-
-    void* (* il2cpp_domain_get)();
-    void** (* il2cpp_domain_get_assemblies)(void* domain, size_t* out);
-
-    void* (* il2cpp_assembly_get_image)(void* assembly);
-
-    void* (* il2cpp_thread_attach)(void* domain);
-    void (* il2cpp_thread_detach)(void* thread);
-
-    const char* (* il2cpp_image_get_name)(void* image);
-    size_t (* il2cpp_image_get_class_count)(void* image);
-    void* (* il2cpp_image_get_class)(void* image, size_t index);
-
-    const char* (* il2cpp_class_get_namespace)(void* klass);
-    const char* (* il2cpp_class_get_name)(void* klass);
-    void* (* il2cpp_class_get_fields)(void* klass, void** iter);
-    void* (* il2cpp_class_get_methods)(void* klass, void** iter);
-
-    const char* (* il2cpp_field_get_name)(void* field);
-
-    const char*   (* il2cpp_method_get_name)(void* method);
-
-    void* (* il2cpp_get_corlib)();
+    #define DUMPER_API_DEF(sym, F) auto sym = _ApiCall<F>(#sym)
 
 
-    class Resolver {
-    public:
-        Resolver() = default;
-        virtual void Resolve() = 0;
-    };
+    DUMPER_API_DEF(il2cpp_domain_get, Domain*());
+    DUMPER_API_DEF(il2cpp_domain_get_assemblies, Assembly**(Domain* domain, size_t* szOut));
 
-    class SymResolver : public Resolver {
+    DUMPER_API_DEF(il2cpp_assembly_get_image, Image*(Assembly* assembly));
+
+    DUMPER_API_DEF(il2cpp_thread_attach, Thread*(Domain* domain));
+    DUMPER_API_DEF(il2cpp_thread_detach, void(Thread* thread));
+
+    DUMPER_API_DEF(il2cpp_image_get_name, const char*(Image* image));
+    DUMPER_API_DEF(il2cpp_image_get_class_count, size_t(Image* image));
+    DUMPER_API_DEF(il2cpp_image_get_class, Class*(Image* image, size_t index));
+
+    DUMPER_API_DEF(il2cpp_class_get_namespace, const char*(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_get_name, const char*(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_get_fields, Field*(Class* klass, void** iter));
+    DUMPER_API_DEF(il2cpp_class_get_methods, Method*(Class* klass, void** iter));
+    DUMPER_API_DEF(il2cpp_class_get_properties, Property*(Class* klass, void** iter));
+    DUMPER_API_DEF(il2cpp_class_get_interfaces, Class*(Class* klass, void** iter));
+    DUMPER_API_DEF(il2cpp_class_get_parent, Class*(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_from_type, Class*(Type* typ));
+    DUMPER_API_DEF(il2cpp_class_from_name, Class*(Image* img, const char* ns, const char* nm));
+    DUMPER_API_DEF(il2cpp_class_from_system_type, Class*(Object* obj));
+    DUMPER_API_DEF(il2cpp_class_get_type, Type*(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_is_generic, bool(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_is_inflated, bool(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_get_element_class, Class*(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_get_declaring_type, Class*(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_get_flags, int(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_is_valuetype, bool(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_is_enum, bool(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_enum_basetype, Type*(Class* klass));
+
+    DUMPER_API_DEF(il2cpp_field_get_name, const char*(Field* field));
+    DUMPER_API_DEF(il2cpp_field_get_type, Type*(Field* field));
+    DUMPER_API_DEF(il2cpp_field_get_offset, size_t(Field* field));
+    DUMPER_API_DEF(il2cpp_field_get_flags, int(Field* field));
+    DUMPER_API_DEF(il2cpp_field_static_get_value, void(Field* field, void* value));
+
+    DUMPER_API_DEF(il2cpp_method_get_name, const char*(Method* method));
+    DUMPER_API_DEF(il2cpp_method_get_return_type, Type*(Method* method));
+    DUMPER_API_DEF(il2cpp_method_get_param, Type*(Method* method, size_t index));
+    DUMPER_API_DEF(il2cpp_method_get_param_count, size_t(Method* method));
+    DUMPER_API_DEF(il2cpp_method_get_param_name, const char*(Method* method, size_t index));
+    DUMPER_API_DEF(il2cpp_method_get_flags, int(Method* method, uint32_t* iflags));
+    DUMPER_API_DEF(il2cpp_method_is_generic, bool(Method* method));
+
+    DUMPER_API_DEF(il2cpp_type_get_name, const char*(Type* typ));
+    DUMPER_API_DEF(il2cpp_type_get_type, int(Type* typ));
+    DUMPER_API_DEF(il2cpp_type_get_attrs, int(Type* typ));
+    DUMPER_API_DEF(il2cpp_type_get_object, Object*(Type* typ));
+    DUMPER_API_DEF(il2cpp_type_is_byref, bool(Type* typ));
+
+    DUMPER_API_DEF(il2cpp_property_get_get_method, Method*(Property* prop));
+    DUMPER_API_DEF(il2cpp_property_get_set_method, Method*(Property* prop));
+    DUMPER_API_DEF(il2cpp_property_get_name, const char*(Property* prop));
+
+    DUMPER_API_DEF(il2cpp_string_chars, const char16_t*(String* s));
+    DUMPER_API_DEF(il2cpp_string_length, int(String* s));
+
+    DUMPER_API_DEF(il2cpp_array_length, int(Array* typ));
+    DUMPER_API_DEF(il2cpp_get_corlib, Image*());
+    DUMPER_API_DEF(il2cpp_runtime_invoke, Object*(Method* met, void* obj, void** args, void** exc));
+
+
+    class LibraryResolver {
+        inline constexpr static auto LIB_NAME = "libil2cpp.so";
+        inline constexpr static uintptr_t ADDR_INVALID = UINTPTR_MAX;
+
+        struct LoadSegment {
+            uintptr_t vaddr;
+            uintptr_t offset;
+            uintptr_t filesz;
+        };
+
         void* handle = nullptr;
+        uintptr_t base = 0;
+        std::vector<LoadSegment> segments;
 
-        static void* GetHandle() {
-            return xdl_open("libil2cpp.so", XDL_DEFAULT);
-        }
-
-        template<typename F>
-        bool Sym(F*& target, const char* name) {
-            target = (F*) xdl_sym(handle, name, nullptr);
-            if (!target) {
-                Log::Debug("resolver: symbol not found: {}", name);
-            }
-            return target != nullptr;
+        static void* FindHandle() {
+            return xdl_open(LIB_NAME, XDL_DEFAULT);
         }
 
     public:
-        void Resolve() override {
-            while (!(handle = GetHandle())) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        void Resolve() {
+            while (!(handle = FindHandle())) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
 
-            Sym(il2cpp_domain_get, "il2cpp_domain_get");
-            Sym(il2cpp_domain_get_assemblies, "il2cpp_domain_get_assemblies");
-            Sym(il2cpp_assembly_get_image, "il2cpp_assembly_get_image");
-            Sym(il2cpp_thread_attach, "il2cpp_thread_attach");
-            Sym(il2cpp_thread_detach, "il2cpp_thread_detach");
-            Sym(il2cpp_image_get_name, "il2cpp_image_get_name");
-            Sym(il2cpp_image_get_class_count, "il2cpp_image_get_class_count");
-            Sym(il2cpp_image_get_class, "il2cpp_image_get_class");
-            Sym(il2cpp_class_get_namespace, "il2cpp_class_get_namespace");
-            Sym(il2cpp_class_get_name, "il2cpp_class_get_name");
-            Sym(il2cpp_class_get_fields, "il2cpp_class_get_fields");
-            Sym(il2cpp_class_get_methods, "il2cpp_class_get_methods");
-            Sym(il2cpp_field_get_name, "il2cpp_field_get_name");
-            Sym(il2cpp_method_get_name, "il2cpp_method_get_name");
-            Sym(il2cpp_get_corlib, "il2cpp_get_corlib");
+            xdl_info_t info{};
+            xdl_info(handle, XDL_DI_DLINFO, &info);
+            base = (uintptr_t) info.dli_fbase;
+
+            for (size_t i = 0; i < info.dlpi_phnum; ++i) {
+                const auto& ph = info.dlpi_phdr[i];
+                if (ph.p_type != PT_LOAD || ph.p_filesz == 0)
+                    continue;
+
+                segments.push_back({
+                    static_cast<uintptr_t>(ph.p_vaddr),
+                    static_cast<uintptr_t>(ph.p_offset),
+                    static_cast<uintptr_t>(ph.p_filesz)
+                });
+            }
+        }
+
+        uintptr_t RVAToOffset(uintptr_t rva) {
+            for (const auto& seg : segments) {
+                if (rva >= seg.vaddr && rva < seg.vaddr + seg.filesz) {
+                    return rva - seg.vaddr + seg.offset;
+                }
+            }
+            return ADDR_INVALID;
+        }
+
+        uintptr_t GetBaseAddress() {
+            return base;
+        }
+
+        void* ResolveSymbol(const std::string& name) {
+            return xdl_sym(handle, name.c_str(), nullptr);
         }
     };
 
 
-    template <typename T>
-    bool _CheckPtr(T* ptr, const char* name) {
-        if (!ptr) {
-            Log::Debug("init: function not initialized: {}", name);
-            return false;
+    class ApiResolver {
+    public:
+        ApiResolver() = default;
+        virtual void Resolve(LibraryResolver& lf) = 0;
+    };
+
+
+    class SymApiResolver : public ApiResolver {
+    public:
+        void Resolve(LibraryResolver& lf) override {
+            for (auto f : _apiCalls) {
+                auto name = f->Name();
+                void* ptr = lf.ResolveSymbol(name);
+                if (!ptr) {
+                    Log::Debug("apiresolver: symbol not found: {}", name);
+                    continue;
+                }
+                f->Assign(ptr);
+            }
         }
-        return true;
-    }
+    };
 
-    bool InitAPI(Resolver& res) {
-        Log::Debug("init: resolving...");
-
-        res.Resolve();
+    
+    bool InitApi(LibraryResolver& libRes, ApiResolver& res) {
+        Log::Debug("init: resolving library...");
+        libRes.Resolve();
+        
+        Log::Debug("init: resolving api...");
+        res.Resolve(libRes);
 
         bool ok = true;
-        ok &= _CheckPtr(il2cpp_domain_get, "il2cpp_domain_get");
-        ok &= _CheckPtr(il2cpp_domain_get_assemblies, "il2cpp_domain_get_assemblies");
-        ok &= _CheckPtr(il2cpp_assembly_get_image, "il2cpp_assembly_get_image");
-        ok &= _CheckPtr(il2cpp_thread_attach, "il2cpp_thread_attach");
-        ok &= _CheckPtr(il2cpp_thread_detach, "il2cpp_thread_detach");
-        ok &= _CheckPtr(il2cpp_image_get_name, "il2cpp_image_get_name");
-        ok &= _CheckPtr(il2cpp_image_get_class_count, "il2cpp_image_get_class_count");
-        ok &= _CheckPtr(il2cpp_image_get_class, "il2cpp_image_get_class");
-        ok &= _CheckPtr(il2cpp_class_get_namespace, "il2cpp_class_get_namespace");
-        ok &= _CheckPtr(il2cpp_class_get_name, "il2cpp_class_get_name");
-        ok &= _CheckPtr(il2cpp_class_get_fields, "il2cpp_class_get_fields");
-        ok &= _CheckPtr(il2cpp_class_get_methods, "il2cpp_class_get_methods");
-        ok &= _CheckPtr(il2cpp_field_get_name, "il2cpp_field_get_name");
-        ok &= _CheckPtr(il2cpp_method_get_name, "il2cpp_method_get_name");
-        ok &= _CheckPtr(il2cpp_get_corlib, "il2cpp_get_corlib");
+        for (auto f : _apiCalls) {
+            if (!f->Valid()) {
+                Log::Debug("init: function not initialized: {}", f->Name());
+                ok = false;
+            }
+        }
 
         if (!ok) {
             Log::Debug("init: not all needed functions initialized!");

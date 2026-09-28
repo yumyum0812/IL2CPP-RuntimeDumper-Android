@@ -925,9 +925,17 @@ dumper\CMakeFiles\dumper.dir\src\lib_main.cc.o.ddi: \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/image.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/class.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/field.h \
+  C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/type.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/method.h \
+  C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/consts.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/thread.h \
   C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/domain.h \
+  C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/string.h \
+  C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/api/array.h \
+  C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/jni_util/android_util.h \
+  C:/AndroidSdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/jni.h \
+  C:/Users/unchi/Workbench/Android-Native-Projects/RuntimeDumper2/dumper/src/dumper/jni_util/jni_util.h \
+  C:/AndroidSdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/assert.h \
   C:/AndroidSdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/c++/v1/filesystem \
   C:/AndroidSdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/c++/v1/__filesystem/copy_options.h \
   C:/AndroidSdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/c++/v1/__filesystem/directory_entry.h \

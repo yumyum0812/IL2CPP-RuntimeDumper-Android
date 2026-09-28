@@ -66,7 +66,7 @@ CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS:FILEPATH=C:/AndroidSdk/ndk/30.0.16248370/tool
 CMAKE_CXX_COMPILER_RANLIB:FILEPATH=C:/AndroidSdk/ndk/30.0.16248370/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ranlib.exe
 
 //Flags used by the compiler during all build types.
-CMAKE_CXX_FLAGS:STRING=-s -Qunused-arguments
+CMAKE_CXX_FLAGS:STRING=
 
 //Flags used by the compiler during debug builds.
 CMAKE_CXX_FLAGS_DEBUG:STRING=

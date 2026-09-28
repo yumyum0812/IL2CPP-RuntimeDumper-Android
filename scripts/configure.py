@@ -8,7 +8,7 @@ build_configuration = "Debug"
 android_ndk = R"C:\AndroidSdk\ndk\30.0.16248370"
 cmake = "cmake.exe"
 ninja = "ninja.exe"
-cxx_flags = "-s -Qunused-arguments"
+cxx_flags = ""
 
 cmake_toolchain = os.path.join(android_ndk, "build/cmake/android.toolchain.cmake")
 
