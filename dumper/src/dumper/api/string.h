@@ -4,7 +4,7 @@
 
 namespace Dumper::Api {
     struct String {
-        std::u16string ToU16String() {
+        std::u16string GetChars() {
             auto s = Functions::il2cpp_string_chars(this);
             if (!s) return {};
             

@@ -1,3 +1,10 @@
+#include <chrono>
+#include <concepts>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <unordered_map>
+
 #include "api/functions.h"
 #include "api/assembly.h"
 #include "api/consts.h"
@@ -6,18 +13,9 @@
 #include "api/string.h"
 #include "api/array.h"
 #include "api/property.h"
-#include "jni_util/android_util.h"
-#include "jni_util/jni_util.h"
-#include "log.h"
 
-#include <assert.h>
-#include <chrono>
-#include <concepts>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <unordered_map>
+#include "jni_util.h"
+#include "log.h"
 
 
 namespace Dumper {
@@ -25,13 +23,14 @@ namespace Dumper {
     using SymApiResolver = Api::Functions::SymApiResolver;
 
     class RuntimeDumper {
+        inline constexpr static auto INDENT = "    ";
+        
         uintptr_t libBase = 0;
 
+        size_t structBoxSize = 0;
         Api::Method* arrGetValue = nullptr;
         Api::Method* rtGetGenericArgs = nullptr;
         Api::Method* rmGetGenericArgs = nullptr;
-
-        size_t structBoxSize = 0;
 
         inline const static std::unordered_map<int, std::string> typeAliases = {
             {Api::TypeEnum::VOID, "void"},
@@ -63,11 +62,20 @@ namespace Dumper {
             {Api::TypeAttributes::PUBLIC, "public"},
             {Api::TypeAttributes::NESTED_PUBLIC, "public"},
             {Api::TypeAttributes::NOT_PUBLIC, "internal"},
-            {Api::TypeAttributes::NESTED_FAM_AND_ASSEM, "internal"},
+            {Api::TypeAttributes::NESTED_FAM_AND_ASSEM, "private protected"},
             {Api::TypeAttributes::NESTED_ASSEMBLY, "internal"},
             {Api::TypeAttributes::NESTED_PRIVATE, "private"},
             {Api::TypeAttributes::NESTED_FAMILY, "protected"},
             {Api::TypeAttributes::NESTED_FAM_OR_ASSEM, "protected internal"},
+        };
+
+        inline const static std::unordered_map<int, std::string> fieldAccessors = {
+            {Api::FieldAttributes::PUBLIC, "public"},
+            {Api::FieldAttributes::PRIVATE, "private"},
+            {Api::FieldAttributes::FAMILY, "protected"},
+            {Api::FieldAttributes::ASSEMBLY, "internal"},
+            {Api::FieldAttributes::FAM_OR_ASSEM, "protected internal"},
+            {Api::FieldAttributes::FAM_AND_ASSEM, "private protected"},
         };
 
         inline const static std::unordered_map<int, std::string> methodAccessors = {
@@ -78,6 +86,20 @@ namespace Dumper {
             {Api::MethodAttributes::FAM_OR_ASSEM, "protected internal"},
             {Api::MethodAttributes::FAM_AND_ASSEM, "private protected"},
         };
+
+        inline const static std::unordered_map<char, std::string> charEscapes = {
+            {'\\', "\\\\"},
+            {'"',  "\\\""},
+            {'\n', "\\\n"},
+            {'\0', "\\0"},
+            {'\a', "\\a"},
+            {'\f', "\\f"},
+            {'\n', "\\n"},
+            {'\r', "\\r"},
+            {'\t', "\\t"},
+            {'\v', "\\v"}
+        };
+
 
         static std::string GetAppExtDir() {
             JavaVM* vm = JniUtil::GetJavaVM();
@@ -95,14 +117,14 @@ namespace Dumper {
             }
             Log::Debug("dumper: jni: attached JNI");
 
-            auto app = AndroidUtil::GetApplication(env);
+            auto app = JniUtil::GetApplication(env);
             if (!app) {
                 Log::Error("dumper: jni: cannot obtain Application");
                 return "";
             }
             Log::Debug("dumper: jni: obtained Application");
 
-            auto extDir = AndroidUtil::GetExternalFilesPath(env, app);
+            auto extDir = JniUtil::GetExternalFilesPath(env, app);
             if (extDir.empty()) {
                 Log::Error("dumper: jni: cannot obtain externalFilesDir");
                 return "";
@@ -151,7 +173,7 @@ namespace Dumper {
                 return purename + "<" + JoinStr(ps, ",") + ">";
             }
 
-            return res + klass->GetName();;
+            return res + klass->GetName();
         }
 
         static std::string FormatTypeType(Api::Class* klass) {
@@ -187,44 +209,40 @@ namespace Dumper {
             if (classAccessors.contains(vis)) {
                 return classAccessors.at(vis) + " ";
             }
+
             return {};
         }
 
         static std::string FormatMethodAccessor(Api::Method* met) {
             using namespace Api::MethodAttributes;
 
-            std::ostringstream out;
+            std::string out;
 
             int flags = met->GetFlags();
+            int isReuse = (flags & VTABLE_LAYOUT_MASK) == REUSE_SLOT;
 
             int acc = flags & MEMBER_ACCESS_MASK;
             if (methodAccessors.contains(acc)) {
-                out << methodAccessors.at(acc) << " ";
+                out += methodAccessors.at(acc);
+                out += " ";
             }
 
             if (flags & STATIC)
-                out << "static ";
+                out += "static ";
             
             if (flags & ABSTRACT) {
-                out << "abstract ";
-                if ((flags & VTABLE_LAYOUT_MASK) == REUSE_SLOT)
-                    out << "override ";
-
-            } else if (flags & FINAL) {
-                if ((flags & VTABLE_LAYOUT_MASK) == REUSE_SLOT)
-                    out << "sealed override ";
-
+                out += "abstract ";
+                if (isReuse) out += "override ";
+            } else if ((flags & FINAL) && isReuse) {
+                out += "sealed override ";
             } else if (flags & VIRTUAL) {
-                if ((flags & VTABLE_LAYOUT_MASK) == NEW_SLOT)
-                    out << "virtual ";
-                else
-                    out << "override ";
+                out += isReuse ? "override " : "virtual ";
             }
             
             if (flags & PINVOKE_IMPL)
-                out << "extern ";
+                out += "extern ";
 
-            return out.str();
+            return out;
         }
 
         static std::string FormatFieldAccessor(Api::Field* fld) {
@@ -233,34 +251,21 @@ namespace Dumper {
             std::string out;
 
             int flags = fld->GetFlags();
-            switch (flags & FIELD_ACCESS_MASK) {
-                case PRIVATE:
-                    out += "private ";
-                    break;
-                case PUBLIC:
-                    out += "public ";
-                    break;
-                case FAMILY:
-                    out += "protected ";
-                    break;
-                case ASSEMBLY:
-                case FAM_AND_ASSEM:
-                    out += "internal ";
-                    break;
-                case FAM_OR_ASSEM:
-                    out += "protected internal ";
-                    break;
+            int vis = flags & FIELD_ACCESS_MASK;
+
+            if (fieldAccessors.contains(vis)) {
+                out += fieldAccessors.at(vis);
+                out += " ";
             }
 
             if (flags & LITERAL) {
                 out += "const ";
             } else {
-                if (flags & STATIC) {
+                if (flags & STATIC)
                     out += "static ";
-                }
-                if (flags & INIT_ONLY) {
+                
+                if (flags & INIT_ONLY)
                     out += "readonly ";
-                }
             }
 
             return out;
@@ -274,41 +279,51 @@ namespace Dumper {
             int attrs = typ->GetAttrs();
             bool isOut = (attrs & OUT) != 0;
             bool isIn = (attrs & IN) != 0;
+
             if (typ->IsByRef()) {
-                if (isOut && !isIn)
-                    out += "out ";
-                else if (isIn && !isOut)
-                    out += "in ";
-                else
+                if (isOut & isIn)
                     out += "ref ";
+
+                else if (isOut)
+                    out += "out ";
+
+                else if (isIn)
+                    out += "in ";
+                    
             } else {
                 if (isIn)
                     out += "[In] ";
                 if (isOut)
                     out += "[Out] ";
             }
+            
             return out;
         }
 
-        static Api::Method* FindMethod(Api::Class* klass, const std::string& name, const std::string& rt, const std::vector<std::string>& params) {
-            auto mets = klass->GetMethods();
-            for (auto m : mets) {
+        static Api::Method* FindMethod(Api::Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
+            auto methods = klass->GetMethods();
+
+            for (auto m : methods) {
                 if (m->GetName() != name) continue;
-                if (m->GetReturnType()->GetName() != rt) continue;
+
+                auto rt = m->GetReturnType();
+                if (!rt || rt->GetName() != rtName) continue;
 
                 auto pc = m->GetParamCount();
-                if (pc != params.size()) continue;
+                if (pc != pNames.size()) continue;
 
                 bool ok = true;
                 for (int i = 0; i < pc; i++) {
                     auto c = m->GetParam(i);
-                    if (c->GetName() != params[i]) {
+                    if (c->GetName() != pNames[i]) {
                         ok = false;
                         break;
                     }
                 }
+
                 if (ok) return m;
             }
+
             return nullptr;
         }
 
@@ -349,20 +364,16 @@ namespace Dumper {
         static std::string FormalStringLiteral(const std::string& input) {
             std::string result;
             for (char c : input) {
-                switch (c) {
-                    case '\\': result += "\\\\"; continue;
-                    case '"':  result += "\\\""; continue;
-                    case '\'': result += "\\\'"; continue;
-                    case '\0': result += "\\0";  continue;
-                    case '\a': result += "\\a";  continue;
-                    case '\f': result += "\\f";  continue;
-                    case '\n': result += "\\n";  continue;
-                    case '\r': result += "\\r";  continue;
-                    case '\t': result += "\\t";  continue;
-                    case '\v': result += "\\v";  continue;
+                if (charEscapes.contains(c)) {
+                    result += charEscapes.at(c);
+                    continue;
                 }
                 if (std::iscntrl(c)) {
                     result += "\\x" + std::to_string(static_cast<int>(static_cast<unsigned char>(c)));
+                    continue;
+                }
+                if (c == '"') {
+                    result += "\\\"";
                     continue;
                 }
                 result += c;
@@ -382,7 +393,7 @@ namespace Dumper {
             return s;
         }
 
-        static std::string Utf16ToUtf8(const std::u16string& u16str) {
+        static std::string U16ToU8(const std::u16string& u16str) {
             std::u8string u8str = std::filesystem::path(u16str).u8string();
             std::string utf8str(reinterpret_cast<const char*>(u8str.data()), u8str.length());
             return utf8str;
@@ -435,6 +446,7 @@ namespace Dumper {
             if (!isConst) return "";
 
             auto type = fld->GetType();
+            auto typeE = type->GetTypeEnum();
             auto klass = Api::Class::FromType(type);
             if (klass->IsEnum()) {
                 type = klass->GetEnumBaseType();
@@ -442,75 +454,63 @@ namespace Dumper {
 
             std::string out;
 
-            switch (type->GetTypeEnum()) {
+            auto appendInteger = [&]<std::integral T>() {
+                T v = fld->GetStaticValue<T>();
+                out += std::format("{:d}", v);
+            };
+
+            auto appendFloat = [&]<std::floating_point T>() {
+                T v = fld->GetStaticValue<T>();
+                out += FormatFloat<T>(v);
+            };
+
+            switch (typeE) {
                 case Api::TypeEnum::CHAR: {
-                    uint16_t by = fld->GetStaticValue<uint16_t>();
-                    out += std::to_string(static_cast<int>(by));
+                    uint16_t v = fld->GetStaticValue<uint16_t>();
+                    
+                    out += "'";
+                    if (std::iscntrl(v)) {
+                        out += "\\x" + std::format("{:X}", v);
+                    } else if (v == '\'') {
+                        out += "\\'";
+                    } else {
+                        out += std::string(1, v);
+                    }
+                    out += "'";
                 } break;
+
                 case Api::TypeEnum::BOOLEAN: {
                     bool value = fld->GetStaticValue<bool>();
                     out += value ? "true" : "false";
                 } break;
-                case Api::TypeEnum::I1: {
-                    int8_t value = fld->GetStaticValue<int8_t>();
-                    out += std::to_string(static_cast<int>(value));
-                } break;
-                case Api::TypeEnum::U1: {
-                    uint8_t value = fld->GetStaticValue<uint8_t>();
-                    out += std::to_string(static_cast<int>(value));
-                } break;
-                case Api::TypeEnum::I2: {
-                    int16_t value = fld->GetStaticValue<int16_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::U2: {
-                    uint16_t value = fld->GetStaticValue<uint16_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::I4: {
-                    int32_t value = fld->GetStaticValue<int32_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::U4: {
-                    uint32_t value = fld->GetStaticValue<uint32_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::I8: {
-                    int64_t value = fld->GetStaticValue<int64_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::U8: {
-                    uint64_t value = fld->GetStaticValue<uint64_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::I: {
-                    intptr_t value = fld->GetStaticValue<uintptr_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::U: {
-                    uintptr_t value = fld->GetStaticValue<uintptr_t>();
-                    out += std::to_string(value);
-                } break;
-                case Api::TypeEnum::R4: {
-                    float value = fld->GetStaticValue<float>();
-                    out += FormatFloat(value);
-                } break;
-                case Api::TypeEnum::R8: {
-                    double value = fld->GetStaticValue<double>();
-                    out += FormatFloat(value);
-                } break;
+
                 case Api::TypeEnum::STRING: {
                     auto* value = fld->GetStaticValue<Api::String*>();
                     if (!value) out += "null";
-                    auto u16s = value->ToU16String();
-                    auto s = Utf16ToUtf8(u16s);
+
+                    auto u16s = value->GetChars();
+                    auto s = U16ToU8(u16s);
                     out += FormalStringLiteral(s);
                 } break;
+
                 case Api::TypeEnum::CLASS:
                 case Api::TypeEnum::OBJECT: {
                     auto* value = fld->GetStaticValue<Api::Object*>();
                     if (!value) out += "null";
                 } break;
+
+                case Api::TypeEnum::I1: appendInteger.operator()<int8_t>(); break;
+                case Api::TypeEnum::U1: appendInteger.operator()<uint8_t>(); break;
+                case Api::TypeEnum::I2: appendInteger.operator()<int16_t>(); break;
+                case Api::TypeEnum::U2: appendInteger.operator()<uint16_t>(); break;
+                case Api::TypeEnum::I4: appendInteger.operator()<int32_t>(); break;
+                case Api::TypeEnum::U4: appendInteger.operator()<uint32_t>(); break;
+                case Api::TypeEnum::I8: appendInteger.operator()<int64_t>(); break;
+                case Api::TypeEnum::U8: appendInteger.operator()<uint64_t>(); break;
+                case Api::TypeEnum::I:  appendInteger.operator()<intptr_t>(); break;
+                case Api::TypeEnum::U:  appendInteger.operator()<uintptr_t>(); break;
+                case Api::TypeEnum::R4: appendFloat.operator()<float>(); break;
+                case Api::TypeEnum::R8: appendFloat.operator()<double>(); break;
             }
 
             if (!out.empty()) {
@@ -527,6 +527,167 @@ namespace Dumper {
                 out += vars[i];
             }
             return out;
+        }
+
+        void DoClass(Api::Class* klass, Api::Functions::LibraryResolver& libRes, std::ofstream& out) {
+            out << "// Namespace: ";
+            out << klass->GetNamespace();
+            out << "\n";
+
+            std::vector<std::string> extNames;
+
+            auto type = klass->GetType();
+            bool isValueType = klass->IsValueType();
+            bool isEnum = klass->IsEnum();
+
+            auto pKlass = klass->GetParent();
+            if (isEnum) {
+                pKlass = Api::Class::FromType(klass->GetEnumBaseType());
+
+            } else if (isValueType) {
+                pKlass = nullptr;
+
+            } else if (pKlass) {
+                auto pType = pKlass->GetType();
+                if (pType->GetTypeEnum() == Api::TypeEnum::OBJECT)
+                    pKlass = nullptr;
+            }
+            
+            if (pKlass) {
+                extNames.push_back(FormatTypeName(pKlass->GetType()));
+            }
+
+            auto ifaces = klass->GetInterfaces();
+            for (int i = 0; i < ifaces.size(); i++) {
+                extNames.push_back(FormatTypeName(ifaces[i]->GetType()));
+            }
+
+            std::string ext;
+            if (!extNames.empty()) {
+                ext = " : " + JoinStr(extNames, ", ");
+            }
+
+            out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + " {" + FormatClassSpecial(klass);
+            out << "\n";
+
+            auto fields = klass->GetFields();
+            for (auto f : fields) {
+                auto fType = f->GetType();
+                auto fFlag = f->GetFlags();
+
+                out << INDENT;
+                out << FormatFieldAccessor(f);
+                out << FormatTypeName(fType);
+                out << " ";
+                out << f->GetName();
+                out << FormatFieldValue(f);
+                out << ";";
+
+                if (!(fFlag & Api::FieldAttributes::LITERAL) && !(fFlag & Api::FieldAttributes::STATIC)) {
+                    int off = f->GetOffset();
+                    int pad = isValueType ? structBoxSize : 0;
+                    if (off <= 0) {
+                        pad = 0;
+                        off = -1;
+                    }
+
+                    out << " // ";
+                    out << FormatOffset(off - pad);
+                }
+
+                out << FormatFieldSpecial(f);
+                out << "\n";
+            }
+
+            auto props = klass->GetProperties();
+            if (!fields.empty() && !props.empty())
+                out << "\n";
+            
+            for (auto p : props) {
+                auto fGet = p->GetGetMethod();
+                auto fSet = p->GetSetMethod();
+
+                auto fEith = fGet ? fGet : fSet;
+                if (!fEith) continue;
+
+                out << INDENT;
+                out << FormatMethodAccessor(fEith) + FormatTypeName(fEith->GetReturnType()) + " " + p->GetName();
+                out << " { ";
+                if (fGet) out << "get; ";
+                if (fSet) out << "set; ";
+                out << "}";
+                out << "\n";
+            }
+
+            auto methods = klass->GetMethods();
+            for (auto m : methods) {
+                auto mName = m->GetName();
+                auto rt = m->GetReturnType();
+                bool isGeneric = m->IsGeneric();
+                bool isInflated = m->IsInflated();
+
+                std::vector<std::string> parFmts;
+
+                auto count = m->GetParamCount();
+                for (int i = 0; i < count; i++) {
+                    auto pt = m->GetParam(i);
+                    auto pn = m->GetParamName(i);
+
+                    parFmts.push_back(FormatParamType(pt) + FormatTypeName(pt) + " " + pn);
+                }
+
+                intptr_t va = -1;
+                intptr_t rva = -1;
+                intptr_t off = -1;
+
+                if (!isInflated && !isGeneric) {
+                    va = (uintptr_t) m->GetPointer();
+                    if (va != UINTPTR_MAX && va != 0) {
+                        rva = va - libBase;
+                        off = libRes.RVAToOffset(rva);
+                    }
+                }
+
+                out << "\n";
+
+                out << INDENT;
+                out << std::format("// RVA: {} Offset: {}", FormatOffset(rva), FormatOffset(off));
+                out << "\n";
+
+                out << INDENT;
+                out << FormatMethodAccessor(m);
+                out << FormatTypeName(rt);
+                out << " ";
+                out << mName;
+                
+                if ((isInflated || isGeneric) && arrGetValue && rmGetGenericArgs) {
+                    auto to = m->GetObject();
+                    auto args = (Api::Array*) rmGetGenericArgs->Invoke(to);
+                    int len = args->GetLength();
+
+                    std::vector<std::string> pNames;
+                    for (int i = 0; i < len; i++) {
+                        auto p = arrGetValue->Invoke(args, i);
+                        auto pt = Api::Class::FromSystemType(p);
+
+                        pNames.push_back(FormatTypeName(pt->GetType()));
+                    }
+                    
+                    out << "<";
+                    out << JoinStr(pNames, ", ");
+                    out << ">";
+                }
+
+                out << "(";
+                out << JoinStr(parFmts, ", ");
+                out << ") { }";
+                out << FormatMethodSpecial(m);
+                out << "\n";
+            }
+
+            out << "}";
+            out << "\n";
+            out << "\n";
         }
 
     public:
@@ -592,8 +753,10 @@ namespace Dumper {
 
             for (auto a : asms) {
                 Image* img = a->GetImage();
-                auto nm = img->GetName();
-                out << "// Assembly: " << nm << "\n";
+                
+                out << "// Assembly: ";
+                out << img->GetName();
+                out << "\n";
             }
             out << "\n";
             out << "\n";
@@ -601,145 +764,9 @@ namespace Dumper {
             for (auto a : asms) {
                 Image* img = a->GetImage();
 
-                auto clss = img->GetClasses();
-                for (auto c : clss) {
-                    out << std::format("// Namespace: {}\n", c->GetNamespace());
-
-                    std::vector<std::string> extNamez;
-
-                    auto tp = c->GetType();
-                    bool isValueType = c->IsValueType();
-                    bool isEnum = c->IsEnum();
-
-                    auto par = c->GetParent();
-                    if (isEnum) {
-                        par = Api::Class::FromType(c->GetEnumBaseType());
-                    } else if (isValueType) {
-                        par = nullptr;
-                    } else if (par) {
-                        auto tpp = par->GetType();
-                        int tpe = tpp->GetTypeEnum();
-                        if (tpe == Api::TypeEnum::OBJECT) {
-                            par = nullptr;
-                        }
-                    }
-                    
-                    if (par) {
-                        extNamez.push_back(FormatTypeName(par->GetType()));
-                    }
-
-                    auto ints = c->GetInterfaces();
-                    for (int i = 0; i < ints.size(); i++) {
-                        extNamez.push_back(FormatTypeName(ints[i]->GetType()));
-                    }
-
-                    std::string ext;
-                    if (!extNamez.empty()) {
-                        ext = " : " + JoinStr(extNamez, ", ");
-                    }
-
-                    out << FormatTypeAccessor(c) + FormatTypeType(c) + FormatTypeName(c->GetType(), true) + ext + " {" + FormatClassSpecial(c);
-                    out << "\n";
-
-                    auto flds = c->GetFields();
-                    for (auto f : flds) {
-                        auto t = f->GetType();
-                        auto ff = f->GetFlags();
-
-                        std::string offstr = "";
-                        if (!(ff & Api::FieldAttributes::LITERAL) && !(ff & Api::FieldAttributes::STATIC)) {
-                            int off = f->GetOffset();
-                            int pad = isValueType ? structBoxSize : 0;
-                            if (off <= 0) {
-                                pad = 0;
-                                off = -1;
-                            }
-                            offstr = " // " + FormatOffset(off - pad);
-                        }
-
-                        out << "    ";
-                        out << FormatFieldAccessor(f) + FormatTypeName(t) + " " + f->GetName() + FormatFieldValue(f) + ";" + offstr + FormatFieldSpecial(f);
-                        out << "\n";
-                    }
-
-                    auto props = c->GetProperties();
-                    if (!flds.empty() && !props.empty())
-                        out << "\n";
-                    
-                    for (auto p : props) {
-                        auto fget = p->GetGetMethod();
-                        auto fset = p->GetSetMethod();
-
-                        auto ff = fget ? fget : fset;
-                        if (!ff) continue;
-
-                        out << "    ";
-                        out << FormatMethodAccessor(ff) + FormatTypeName(ff->GetReturnType()) + " " + p->GetName();
-                        out << " { ";
-                        if (fget) {
-                            out << "get; ";
-                        }
-                        if (fset) {
-                            out << "set; ";
-                        }
-                        out << "}";
-                        out << "\n";
-                    }
-
-                    auto mtds = c->GetMethods();
-                    for (auto m : mtds) {
-                        auto t = m->GetReturnType();
-
-                        std::vector<std::string> parFmts;
-
-                        auto count = m->GetParamCount();
-                        for (int i = 0; i < count; i++) {
-                            auto pt = m->GetParam(i);
-                            auto pn = m->GetParamName(i);
-
-                            parFmts.push_back(FormatParamType(pt) + FormatTypeName(pt) + " " + pn);
-                        }
-
-                        intptr_t va = -1;
-                        intptr_t rva = -1;
-                        intptr_t off = -1;
-
-                        std::string decr = "";
-                        if (!m->IsInflated() && !m->IsGeneric()) {
-                            va = (uintptr_t) m->GetPointer();
-                            if (va != UINTPTR_MAX && va != 0) {
-                                rva = va - libBase;
-                                off = libRes.RVAToOffset(rva);
-                            }
-                        } else if (arrGetValue && rmGetGenericArgs) {
-                            auto to = m->GetObject();
-                            auto args = (Api::Array*) rmGetGenericArgs->Invoke(to);
-                            
-                            int len = args->GetLength();
-                            std::vector<std::string> ps;
-                            for (int i = 0; i < len; i++) {
-                                auto p = arrGetValue->Invoke(args, i);
-                                auto pt = Api::Class::FromSystemType(p);
-                                ps.push_back(FormatTypeName(pt->GetType()));
-                            }
-                            
-                            decr = "<" + JoinStr(ps, ", ") + ">";
-                        }
-
-                        out << "\n";
-
-                        out << "   ";
-                        out << std::format("// RVA: {} Offset: {}", FormatOffset(rva), FormatOffset(off));
-                        out << "\n";
-
-                        out << "    ";
-                        out << FormatMethodAccessor(m) + FormatTypeName(t)+ " " + m->GetName() + decr + "(" + JoinStr(parFmts, ", ") + ") { }" + FormatMethodSpecial(m);
-                        out << "\n";
-                    }
-
-                    out << "}";
-                    out << "\n";
-                    out << "\n";
+                auto klasses = img->GetClasses();
+                for (auto k : klasses) {
+                    DoClass(k, libRes, out);
                 }
 
                 out.flush();
@@ -753,6 +780,7 @@ namespace Dumper {
 
             Log::Debug("dumper: detaching il2cpp...");
             thr->Detach();
+
             Log::Debug("dumper: all finished!");
         }
     };
