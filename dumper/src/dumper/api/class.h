@@ -111,5 +111,9 @@ namespace Dumper::Api {
         int32_t GetInstanceSize() {
             return Functions::il2cpp_class_instance_size(this);
         }
+
+        bool IsAssignableFrom(Class* ext) {
+            return Functions::il2cpp_class_is_assignable_from(this, ext);
+        }
     };
 }

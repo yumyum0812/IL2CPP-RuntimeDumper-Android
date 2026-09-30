@@ -34,9 +34,27 @@ namespace Dumper {
         uintptr_t libBase = 0;
 
         size_t structBoxSize = 0;
+        
+        Api::Class* typeKlass = nullptr;
         Api::Method* arrGetValue = nullptr;
-        Api::Method* rtGetGenericArgs = nullptr;
-        Api::Method* rmGetGenericArgs = nullptr;
+        Api::Method* tGetGenericArgs = nullptr;
+        Api::Method* tGetField = nullptr;
+        Api::Method* tGetProp = nullptr;
+        Api::Method* miGetAttrs = nullptr;
+        Api::Method* mGetGenericArgs = nullptr;
+
+        struct {
+            Api::Method* getAttType = nullptr;
+            Api::Method* getConstructorArgs = nullptr;
+            Api::Method* getNamedArgs = nullptr;
+        } attM;
+        struct {
+            Api::Method* getValue = nullptr;
+        } attTypedArgM;
+        struct {
+            Api::Method* getName = nullptr;
+            Api::Method* getTypedValue = nullptr;
+        } attNamedArgM;
 
         inline const static std::unordered_map<int, std::string> typeAliases = {
             {Api::TypeEnum::VOID, "void"},
@@ -96,7 +114,7 @@ namespace Dumper {
         inline const static std::unordered_map<char, std::string> charEscapes = {
             {'\\', "\\\\"},
             {'"',  "\\\""},
-            {'\n', "\\\n"},
+            {'\n', "\\n"},
             {'\0', "\\0"},
             {'\a', "\\a"},
             {'\f', "\\f"},
@@ -160,9 +178,9 @@ namespace Dumper {
                 return typeAliases.at(tp);
             }
 
-            if (arrGetValue && rtGetGenericArgs && (klass->IsGeneric() || klass->IsInflated())) {
+            if (arrGetValue && tGetGenericArgs && (klass->IsGeneric() || klass->IsInflated())) {
                 auto to = typ->GetObject();
-                auto getGensV = to->GetVirtualMethod(rtGetGenericArgs);
+                auto getGensV = to->GetVirtualMethod(tGetGenericArgs);
                 auto args = (Api::Array*) getGensV->Invoke(to);
                 
                 std::string pureName = klass->GetName();
@@ -308,7 +326,7 @@ namespace Dumper {
             return out;
         }
 
-        Api::Method* FindMethod(Api::Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames, bool ancestor = false) {
+        Api::Method* FindMethod(Api::Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
             auto methods = klass->GetMethods();
 
             for (auto m : methods) {
@@ -334,58 +352,58 @@ namespace Dumper {
                 if (ok) return m;
             }
 
-            if (ancestor) {
-                auto par = klass->GetParent();
-                auto inters = klass->GetInterfaces();
-                inters.push_back(par);
-                
-                for (auto p : inters) {
-                    if (p && p != klass) {
-                        auto met = FindMethod(p, name, rtName, pNames, true);
-                        if (met) return met;
-                    }
+            return nullptr;
+        }
+
+        Api::Method* FindMethodP(Api::Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
+            auto m = FindMethod(klass, name, rtName, pNames);
+            if (m) return m;
+
+            auto par = klass->GetParent();
+            return FindMethod(par, name, rtName, pNames);
+        }
+
+        Api::Method* FindMethodI(Api::Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
+            auto m = FindMethod(klass, name, rtName, pNames);
+
+            auto inters = klass->GetInterfaces();
+            for (auto p : inters) {
+                if (p && p != klass) {
+                    auto met = FindMethod(p, name, rtName, pNames);
+                    if (met) return met;
                 }
             }
-
             return nullptr;
+        }
+
+        void RemoveSuffix(std::string& str, std::string_view suff) {
+            if (str.ends_with(suff))
+                str.erase(str.size() - suff.size());
         }
 
         std::vector<Api::Object*> ObjListToVector(Api::Object* obj) {
             auto klass = obj->GetClass();
 
-            // auto getCount = FindMethod(klass, "get_Count", "System.Int32", {}, true);
-            auto getItem = FindMethod(klass, "get_Item", "", {"System.Int32"}, true);
+            auto getCount = FindMethodI(klass, "get_Count", "System.Int32", {});
+            auto getItem = FindMethodI(klass, "get_Item", "", {"System.Int32"});
 
-            auto cor = Api::Image::GetCorlib();
-            auto k1 = cor->FindClass("System.Collections", "ICollection`1");
-            auto gc1 = FindMethod(k1, "get_Item", "System.Int32", {}, false);
-
-            auto getCount = obj->GetVirtualMethod(gc1);
-
-            // auto getItem = FindMethod(klass, "get_Item", "", {"System.Int32"}, true);
+            getCount = obj->GetVirtualMethod(getCount);
+            getItem = obj->GetVirtualMethod(getItem);
 
             if (!getCount) {
-                Log::Warn("test: get_Count is null for {}", FormatTypeName(klass->GetType()));
+                Log::Warn("dumper: get_Count is null for {}", FormatTypeName(klass->GetType()));
                 return {};
             }
             if (!getItem) {
-                Log::Warn("test: get_Item is null for {}", FormatTypeName(klass->GetType()));
+                Log::Warn("dumper: get_Item is null for {}", FormatTypeName(klass->GetType()));
                 return {};
             }
 
             auto countObj = getCount->Invoke(obj);
-            if (!countObj) {
-                Log::Error("getCount->Invoke returned null: {}, {}", FormatTypeName(klass->GetType()), getCount->GetReturnType()->GetName());
-                Log::Debug("rva: {} ", getCount ? FormatOffset(uintptr_t(getCount->methodPtr) - libBase) : "?");
+            if (!countObj)
                 return {};
-            }
-            auto unboxed = countObj->Unbox();
-            if (!unboxed) {
-                Log::Error("Count Unbox returned null");
-                return {};
-            }
 
-            int count = *reinterpret_cast<int*>(unboxed);
+            int count = *reinterpret_cast<int*>(countObj->Unbox());
 
             std::vector<Api::Object*> vec;
             vec.reserve(count);
@@ -406,20 +424,30 @@ namespace Dumper {
                 Log::Debug("dumper: object box size: 0x{:X}", structBoxSize);
             }
 
-            auto typeKlass = corlib->FindClass("System", "Type");
+            typeKlass = corlib->FindClass("System", "Type");
             if (!typeKlass) {
-                Log::Warn("dumper: Type not found");
+                Log::Warn("dumper: class Type not found");
             } else {
-                rtGetGenericArgs = FindMethod(typeKlass, "GetGenericArguments", "System.Type[]", {});
-                Log::Debug("dumper: Type.GetGenericArguments: 0x{:X}", (uintptr_t) rtGetGenericArgs);
+                tGetGenericArgs = FindMethod(typeKlass, "GetGenericArguments", "System.Type[]", {});
+                if (!tGetGenericArgs)
+                    Log::Warn("dumper: method Type.GetGenericArguments not found");
+
+                tGetField = FindMethod(typeKlass, "GetField", "System.Reflection.FieldInfo", {"System.String"});
+                if (!tGetField)
+                    Log::Warn("dumper: method Type.GetField not found");
+
+                tGetProp = FindMethod(typeKlass, "GetProperty", "System.Reflection.PropertyInfo", {"System.String"});
+                if (!tGetProp)
+                    Log::Warn("dumper: method Type.GetProperty not found");
             }
 
             auto methodKlass = corlib->FindClass("System.Reflection", "MethodBase");
             if (!methodKlass) {
                 Log::Warn("dumper: MethodBase not found");
             } else {
-                rmGetGenericArgs = FindMethod(methodKlass, "GetGenericArguments", "System.Type[]", {});
-                Log::Debug("dumper: MethodBase.GetGenericArguments: 0x{:X}", (uintptr_t) rmGetGenericArgs);
+                mGetGenericArgs = FindMethod(methodKlass, "GetGenericArguments", "System.Type[]", {});
+                if (!tGetGenericArgs)
+                    Log::Warn("dumper: method MethodBase.GetGenericArguments not found");
             }
 
             auto arrKlass = corlib->FindClass("System", "Array");
@@ -427,7 +455,113 @@ namespace Dumper {
                 Log::Warn("dumper: System.Array not found");
             } else {
                 arrGetValue = FindMethod(arrKlass, "GetValue", "System.Object", {"System.Int32"});
-                Log::Debug("dumper: System.Array.GetValue: 0x{:X}", (uintptr_t) arrGetValue);
+                if (!arrGetValue)
+                    Log::Warn("dumper: method Array.GetValue not found");
+            }
+        }
+
+        void InitReflectionAtt(Api::Image* corlib) {
+            auto memberInfoC = corlib->FindClass("System.Reflection", "MemberInfo");
+            if (!memberInfoC) {
+                Log::Warn("dumper: class MemberInfo not found");
+                return;
+            }
+
+            miGetAttrs = FindMethod(
+                memberInfoC,
+                "GetCustomAttributesData",
+                "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
+                {}
+            );
+            if (!miGetAttrs) {
+                Log::Warn("dumper: method MemberInfo.GetCustomAttributesData not found");
+                return;
+            }
+
+            auto attC = corlib->FindClass("System.Reflection", "CustomAttributeData");
+            {
+                if (!attC) {
+                    Log::Warn("dumper: class CustomAttributeData not found");
+                    return;
+                }
+                
+                attM.getAttType = FindMethod(
+                    attC,
+                    "get_AttributeType",
+                    "System.Type",
+                    {}
+                );
+                if (!attM.getAttType) {
+                    Log::Warn("dumper: method CustomAttributeData.get_AttributeType not found");
+                    return;
+                }
+
+                attM.getConstructorArgs = FindMethod(
+                    attC,
+                    "get_ConstructorArguments",
+                    "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>",
+                    {}
+                );
+                if (!attM.getConstructorArgs) {
+                    Log::Warn("dumper: method CustomAttributeData.get_ConstructorArguments not found");
+                    return;
+                }
+
+                attM.getNamedArgs = FindMethod(
+                    attC,
+                    "get_NamedArguments",
+                    "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>",
+                    {}
+                );
+                if (!attM.getNamedArgs) {
+                    Log::Warn("dumper: method CustomAttributeData.get_NamedArguments not found");
+                    return;
+                }
+            }
+
+            auto typedArgC = corlib->FindClass("System.Reflection", "CustomAttributeTypedArgument");
+            if (!typedArgC) {
+                Log::Warn("dumper: method CustomAttributeTypedArgument not found");
+                return;
+            }
+
+            attTypedArgM.getValue = FindMethod(
+                typedArgC,
+                "get_Value",
+                "System.Object",
+                {}
+            );
+            if (!attTypedArgM.getValue) {
+                Log::Warn("dumper: method CustomAttributeTypedArgument.get_Value not found");
+                return;
+            }
+
+            auto namedArgC = corlib->FindClass("System.Reflection", "CustomAttributeNamedArgument");
+            if (!namedArgC) {
+                Log::Warn("dumper: class CustomAttributeNamedArgument not found");
+                return;
+            }
+
+            attNamedArgM.getName = FindMethod(
+                namedArgC,
+                "get_MemberName",
+                "System.String",
+                {}
+            );
+            if (!attNamedArgM.getName) {
+                Log::Warn("dumper: method CustomAttributeNamedArgument.get_MemberName not found");
+                return;
+            }
+
+            attNamedArgM.getTypedValue = FindMethod(
+                namedArgC,
+                "get_TypedValue",
+                "System.Reflection.CustomAttributeTypedArgument",
+                {}
+            );
+            if (!attNamedArgM.getTypedValue) {
+                Log::Warn("dumper: method CustomAttributeNamedArgument.get_TypedValue not found");
+                return;
             }
         }
 
@@ -594,7 +728,7 @@ namespace Dumper {
             return out;
         }
 
-        std::string FormatValue(Api::Object* obj) {
+        std::string FormatObject(Api::Object* obj) {
             using namespace Api::TypeEnum;
 
             if (!obj) return "null";
@@ -653,11 +787,16 @@ namespace Dumper {
                 case Api::TypeEnum::U:  appendInteger.operator()<uintptr_t>(); break;
                 case Api::TypeEnum::R4: appendFloat.operator()<float>(); break;
                 case Api::TypeEnum::R8: appendFloat.operator()<double>(); break;
+                case Api::TypeEnum::CLASS: {
+                    if (typeKlass && typeKlass->IsAssignableFrom(obj->GetClass())) {
+                        auto tName = Api::Class::FromSystemType(obj)->GetType();
+                        return "typeof(" + FormatTypeName(tName) + ")";
+                    }
+                }break;
             }
 
-            if (out.empty()) {
-                out += "?";
-            }
+            if (out.empty())
+                return "?";
 
             return out;
         }
@@ -669,6 +808,76 @@ namespace Dumper {
                 out += vars[i];
             }
             return out;
+        }
+
+        void DoAttr(Api::Object* memberInfo, std::ofstream& out, int ind = 1) {
+            if (
+                miGetAttrs &&
+                attM.getAttType && attM.getConstructorArgs && attM.getNamedArgs &&
+                attTypedArgM.getValue && attNamedArgM.getTypedValue &&
+                attNamedArgM.getName
+            ) {
+                Api::Object* attrs = memberInfo->GetVirtualMethod(miGetAttrs)->Invoke(memberInfo);
+                
+                auto attrsV = ObjListToVector(attrs);
+                for (int i = 0; i < attrsV.size(); i++) {
+                    Api::Object* attr = attrsV[i];
+                    if (!attr) continue;
+
+                    Api::Object* attTypeO = attM.getAttType->Invoke(attr);
+                    if (!attTypeO) continue;
+
+                    auto attC = Api::Class::FromSystemType(attTypeO);
+                    auto attTypeName = attC->GetName();
+                    RemoveSuffix(attTypeName, "Attribute");
+
+                    for (int i = 0; i < ind; i++) {
+                        out << INDENT;
+                    }
+                    out << "[";
+                    out << attTypeName;
+
+                    Api::Object* constrs = attM.getConstructorArgs->Invoke(attr);
+                    if (!constrs) continue;
+
+                    Api::Object* nameds = attM.getNamedArgs->Invoke(attr);
+                    if (!nameds) continue;
+
+                    auto constrsV = ObjListToVector(constrs);
+                    auto namedsV = ObjListToVector(nameds);
+
+                    std::vector<std::string> argStrs;
+                    for (Api::Object* typed : constrsV) {
+                        if (!typed) continue;
+                        void* typedUnbox = typed->Unbox();
+
+                        Api::Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
+                        argStrs.push_back(FormatObject(v));
+                    }
+                    for (Api::Object* named : namedsV) {
+                        if (!named) continue;
+                        void* namedUnbox = named->Unbox();
+
+                        Api::String* memberNameS = (Api::String*) attNamedArgM.getName->Invoke(namedUnbox);
+                        auto memberName = memberNameS ? U16ToU8(memberNameS->GetChars()) : "null";
+
+                        Api::Object* typed = attNamedArgM.getTypedValue->Invoke(namedUnbox);
+                        if (!typed) continue;
+                        void* typedUnbox = typed->Unbox();
+
+                        Api::Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
+                        argStrs.push_back(memberName + " = " + FormatObject(v));
+                    }
+
+                    if (!argStrs.empty()) {
+                        out << "(";
+                        out << JoinStr(argStrs, ", ");
+                        out << ")";
+                    }
+                    out << "]";
+                    out << "\n";
+                }
+            }
         }
 
         void DoClass(Api::Class* klass, Api::Functions::LibraryResolver& libRes, std::ofstream& out) {
@@ -709,11 +918,24 @@ namespace Dumper {
                 ext = " : " + JoinStr(extNames, ", ");
             }
 
+            Api::Object* to = type->GetObject();
+            DoAttr(to, out, 0);
+
             out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + " {" + FormatClassSpecial(klass);
             out << "\n";
 
             auto fields = klass->GetFields();
             for (auto f : fields) {
+                if (tGetField) {
+                    auto fName = f->GetName();
+                    auto fNameS = Api::String::New(fName.c_str());
+                    auto gf = to->GetVirtualMethod(tGetField);
+                    auto fo = gf->Invoke(to, fNameS);
+                    if (fo) {
+                        DoAttr(fo, out);
+                    }
+                }
+
                 auto fType = f->GetType();
                 auto fFlag = f->GetFlags();
                 bool isConst = fFlag & Api::FieldAttributes::LITERAL;
@@ -749,6 +971,16 @@ namespace Dumper {
                 out << "\n";
             
             for (auto p : props) {
+                if (tGetField) {
+                    auto pName = p->GetName();
+                    auto pNameS = Api::String::New(pName.c_str());
+                    auto gf = to->GetVirtualMethod(tGetField);
+                    auto po = gf->Invoke(to, pNameS);
+                    if (po) {
+                        DoAttr(po, out);
+                    }
+                }
+
                 auto fGet = p->GetGetMethod();
                 auto fSet = p->GetSetMethod();
 
@@ -799,98 +1031,7 @@ namespace Dumper {
                 out << std::format("// RVA: {} Offset: {} VA: {}", FormatOffset(rva), FormatOffset(off), FormatOffset(rva));
                 out << "\n";
 
-                auto o = m->GetObject();
-                auto methodKlass = o->GetClass();
-
-                // auto mtd = FindMethod(methodKlass, "GetCustomAttributesData", "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>", {}, true);
-                // if (mtd) {
-                //     auto lst = mtd->Invoke(o);
-                //     auto vec = ObjListToVector(lst);
-
-                //     if (!vec.empty()) {
-                //         static auto corlib = Api::Image::GetCorlib();
-                //         auto cadC = corlib->FindClass("System.Reflection", "CustomAttributeData");
-                //         auto mtdCAD = FindMethod(cadC, "get_AttributeType", "System.Type", {}, true);
-
-                //         for (int i = 0; i < vec.size(); i++) {
-                //             auto attData = vec[i];
-                //             if (!attData) continue;
-
-                //             auto attType = mtdCAD->Invoke(attData);
-                //             if (!attType) continue;
-
-                //             auto dataC = attData->GetClass();
-                //             if (!dataC) continue;
-
-                //             auto getCAs = FindMethod(dataC, "get_ConstructorArguments", "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>", {}, true);
-                //             if (!getCAs) continue;
-
-                //             auto getNAs = FindMethod(dataC, "get_NamedArguments", "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>", {}, true);
-                //             if (!getNAs) continue;
-
-                //             auto cataC = corlib->FindClass("System.Reflection", "CustomAttributeTypedArgument");
-                //             if (!cataC) continue;
-
-                //             auto cataV = FindMethod(cataC, "get_Value", "System.Object", {}, true);
-                //             if (!cataV) continue;
-
-                //             auto canaC = corlib->FindClass("System.Reflection", "CustomAttributeNamedArgument");
-                //             if (!canaC) continue;
-
-                //             auto canaMN = FindMethod(canaC, "get_MemberName", "System.String", {}, true);
-                //             if (!canaMN) continue;
-
-                //             auto canaTV = FindMethod(canaC, "get_TypedValue", "System.Reflection.CustomAttributeTypedArgument", {}, true);
-                //             if (!canaTV) continue;
-
-                //             auto cas = getCAs->Invoke(attData);
-                //             if (!cas) continue;
-
-                //             auto nas = getNAs->Invoke(attData);
-                //             if (!nas) continue;
-
-                //             auto casV = ObjListToVector(cas);
-                //             auto nasV = ObjListToVector(nas);
-
-                //             std::vector<std::string> argstrs;
-                //             for (int i = 0; i < casV.size(); i++) {
-                //                 auto cata = casV[i]->Unbox();
-                //                 if (!cata) continue;
-
-                //                 auto aV = cataV->Invoke(cata);
-                //                 argstrs.push_back(FormatValue(aV));
-                //             }
-                //             for (int i = 0; i < nasV.size(); i++) {
-                //                 auto cana = nasV[i]->Unbox();
-                //                 if (!cana) continue;
-
-                //                 auto memberNameS = (Api::String*) canaMN->Invoke(cana);
-                //                 auto memberName = U16ToU8(memberNameS->GetChars());
-
-                //                 auto cata = canaTV->Invoke(cana)->Unbox();
-                //                 auto aV = cataV->Invoke(cata);
-
-                //                 argstrs.push_back(memberName + " = " + FormatValue(aV));
-                //             }
-
-                //             auto attC = Api::Class::FromSystemType(attType);
-                //             auto attTypeName = attC->GetName();
-                //             if (attTypeName.ends_with("Attribute"))
-                //                 attTypeName.erase(attTypeName.size() - (sizeof("Attribute") - 1));
-
-                //             out << INDENT;
-                //             out << "[";
-                //             out << attTypeName;
-                //             if (!argstrs.empty()) {
-                //                 out << "(";
-                //                 out << JoinStr(argstrs, ", ");
-                //                 out << ")";
-                //             }
-                //             out << "]";
-                //             out << "\n";
-                //         }
-                //     }
-                // }
+                DoAttr(m->GetObject(), out);
 
                 out << INDENT;
                 out << FormatMethodAccessor(m);
@@ -898,9 +1039,9 @@ namespace Dumper {
                 out << " ";
                 out << mName;
                 
-                if ((isInflated || isGeneric) && arrGetValue && rmGetGenericArgs) {
+                if ((isInflated || isGeneric) && arrGetValue && mGetGenericArgs) {
                     auto to = m->GetObject();
-                    auto getGensV = to->GetVirtualMethod(rmGetGenericArgs);
+                    auto getGensV = to->GetVirtualMethod(mGetGenericArgs);
                     auto args = (Api::Array*) getGensV->Invoke(to);
                     int len = args->GetLength();
 
@@ -960,6 +1101,7 @@ namespace Dumper {
             Log::Debug("dumper: corlib: 0x{:X}", (uintptr_t) corlib);
 
             InitReflection(corlib);
+            InitReflectionAtt(corlib);
 
             auto nm = corlib->GetName();
             Log::Debug("dumper: corlib: {}", nm);

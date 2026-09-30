@@ -104,6 +104,7 @@ namespace Dumper::Api::Functions {
     DUMPER_API_DEF(il2cpp_class_is_enum, bool(Class* klass));
     DUMPER_API_DEF(il2cpp_class_enum_basetype, Type*(Class* klass));
     DUMPER_API_DEF(il2cpp_class_instance_size, uintptr_t(Class* klass));
+    DUMPER_API_DEF(il2cpp_class_is_assignable_from, bool(Class* base, Class* ext));
 
     DUMPER_API_DEF(il2cpp_field_get_name, const char*(Field* field));
     DUMPER_API_DEF(il2cpp_field_get_type, Type*(Field* field));
@@ -136,6 +137,7 @@ namespace Dumper::Api::Functions {
     DUMPER_API_DEF(il2cpp_object_unbox, void*(Object* obj));
     DUMPER_API_DEF(il2cpp_object_get_virtual_method, Method*(Object* obj, Method* base));
 
+    DUMPER_API_DEF(il2cpp_string_new, String*(const char* cstr));
     DUMPER_API_DEF(il2cpp_string_chars, const char16_t*(String* s));
     DUMPER_API_DEF(il2cpp_string_length, int(String* s));
 
