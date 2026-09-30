@@ -1,12 +1,15 @@
 #pragma once
 
 #include "functions.h"
-#include "class.h"
 #include <string>
 #include <vector>
 
 namespace Dumper::Api {
     struct Image {
+        static Image* GetCorlib() {
+            return Functions::il2cpp_get_corlib();
+        }
+        
         std::string GetName() {
             auto s = Functions::il2cpp_image_get_name(this);
             return {s ? s : ""};

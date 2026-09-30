@@ -6,6 +6,12 @@
 #include <unordered_map>
 
 #include "api/functions.h"
+#include "api/object.h"
+#include "api/class.h"
+#include "api/image.h"
+#include "api/method.h"
+#include "api/type.h"
+#include "api/field.h"
 #include "api/assembly.h"
 #include "api/consts.h"
 #include "api/thread.h"
@@ -154,23 +160,25 @@ namespace Dumper {
                 return typeAliases.at(tp);
             }
 
-            if (arrGetValue && rtGetGenericArgs && (klass->IsGeneric()) || klass->IsInflated()) {
+            if (arrGetValue && rtGetGenericArgs && (klass->IsGeneric() || klass->IsInflated())) {
                 auto to = typ->GetObject();
-                auto args = (Api::Array*) rtGetGenericArgs->Invoke(to);
+                auto getGensV = to->GetVirtualMethod(rtGetGenericArgs);
+                auto args = (Api::Array*) getGensV->Invoke(to);
                 
-                std::string purename = klass->GetName();
-                size_t pos = purename.find('`');
-                purename = (pos != std::string::npos) ? purename.substr(0, pos) : purename;
+                std::string pureName = klass->GetName();
+                size_t pos = pureName.find('`');
+                pureName = (pos != std::string::npos) ? pureName.substr(0, pos) : pureName;
 
                 int len = args->GetLength();
                 std::vector<std::string> ps;
                 for (int i = 0; i < len; i++) {
                     auto p = arrGetValue->Invoke(args, i);
                     auto pt = Api::Class::FromSystemType(p);
-                    ps.push_back(FormatTypeName(pt->GetType(), def));
+                    auto ptC = pt->GetType();
+                    ps.push_back(FormatTypeName(ptC, def));
                 }
                 
-                return purename + "<" + JoinStr(ps, ",") + ">";
+                return pureName + "<" + JoinStr(ps, ", ") + ">";
             }
 
             return res + klass->GetName();
@@ -300,14 +308,16 @@ namespace Dumper {
             return out;
         }
 
-        static Api::Method* FindMethod(Api::Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
+        Api::Method* FindMethod(Api::Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames, bool ancestor = false) {
             auto methods = klass->GetMethods();
 
             for (auto m : methods) {
                 if (m->GetName() != name) continue;
 
-                auto rt = m->GetReturnType();
-                if (!rt || rt->GetName() != rtName) continue;
+                if (!rtName.empty()) {
+                    auto rt = m->GetReturnType();
+                    if (!rt || rt->GetName() != rtName) continue;
+                }
 
                 auto pc = m->GetParamCount();
                 if (pc != pNames.size()) continue;
@@ -324,32 +334,92 @@ namespace Dumper {
                 if (ok) return m;
             }
 
+            if (ancestor) {
+                auto par = klass->GetParent();
+                auto inters = klass->GetInterfaces();
+                inters.push_back(par);
+                
+                for (auto p : inters) {
+                    if (p && p != klass) {
+                        auto met = FindMethod(p, name, rtName, pNames, true);
+                        if (met) return met;
+                    }
+                }
+            }
+
             return nullptr;
         }
 
+        std::vector<Api::Object*> ObjListToVector(Api::Object* obj) {
+            auto klass = obj->GetClass();
+
+            // auto getCount = FindMethod(klass, "get_Count", "System.Int32", {}, true);
+            auto getItem = FindMethod(klass, "get_Item", "", {"System.Int32"}, true);
+
+            auto cor = Api::Image::GetCorlib();
+            auto k1 = cor->FindClass("System.Collections", "ICollection`1");
+            auto gc1 = FindMethod(k1, "get_Item", "System.Int32", {}, false);
+
+            auto getCount = obj->GetVirtualMethod(gc1);
+
+            // auto getItem = FindMethod(klass, "get_Item", "", {"System.Int32"}, true);
+
+            if (!getCount) {
+                Log::Warn("test: get_Count is null for {}", FormatTypeName(klass->GetType()));
+                return {};
+            }
+            if (!getItem) {
+                Log::Warn("test: get_Item is null for {}", FormatTypeName(klass->GetType()));
+                return {};
+            }
+
+            auto countObj = getCount->Invoke(obj);
+            if (!countObj) {
+                Log::Error("getCount->Invoke returned null: {}, {}", FormatTypeName(klass->GetType()), getCount->GetReturnType()->GetName());
+                Log::Debug("rva: {} ", getCount ? FormatOffset(uintptr_t(getCount->methodPtr) - libBase) : "?");
+                return {};
+            }
+            auto unboxed = countObj->Unbox();
+            if (!unboxed) {
+                Log::Error("Count Unbox returned null");
+                return {};
+            }
+
+            int count = *reinterpret_cast<int*>(unboxed);
+
+            std::vector<Api::Object*> vec;
+            vec.reserve(count);
+
+            for (int i = 0; i < count; i++) {
+                vec.push_back(getItem->Invoke(obj, i));
+            }
+
+            return vec;
+        }
+
         void InitReflection(Api::Image* corlib) {
-            auto vtKlass = corlib->FindClass("System", "ValueType");
+            auto vtKlass = corlib->FindClass("System", "Object");
             if (!vtKlass) {
-                Log::Warn("dumper: System.ValueType not found");
+                Log::Warn("dumper: Object not found");
             } else {
                 structBoxSize = vtKlass->GetInstanceSize();
-                Log::Debug("dumper: struct box size: 0x{:X}", structBoxSize);
+                Log::Debug("dumper: object box size: 0x{:X}", structBoxSize);
             }
 
-            auto typeKlass = corlib->FindClass("System", "RuntimeType");
+            auto typeKlass = corlib->FindClass("System", "Type");
             if (!typeKlass) {
-                Log::Warn("dumper: System.RuntimeType not found");
+                Log::Warn("dumper: Type not found");
             } else {
                 rtGetGenericArgs = FindMethod(typeKlass, "GetGenericArguments", "System.Type[]", {});
-                Log::Debug("dumper: System.RuntimeType.GetGenericArguments: 0x{:X}", (uintptr_t) rtGetGenericArgs);
+                Log::Debug("dumper: Type.GetGenericArguments: 0x{:X}", (uintptr_t) rtGetGenericArgs);
             }
 
-            auto methodKlass = corlib->FindClass("System.Reflection", "RuntimeMethodInfo");
+            auto methodKlass = corlib->FindClass("System.Reflection", "MethodBase");
             if (!methodKlass) {
-                Log::Warn("dumper: System.Reflection.RuntimeMethodInfo not found");
+                Log::Warn("dumper: MethodBase not found");
             } else {
                 rmGetGenericArgs = FindMethod(methodKlass, "GetGenericArguments", "System.Type[]", {});
-                Log::Debug("dumper: System.Reflection.RuntimeMethodInfo.GetGenericArguments: 0x{:X}", (uintptr_t) rmGetGenericArgs);
+                Log::Debug("dumper: MethodBase.GetGenericArguments: 0x{:X}", (uintptr_t) rmGetGenericArgs);
             }
 
             auto arrKlass = corlib->FindClass("System", "Array");
@@ -379,6 +449,11 @@ namespace Dumper {
                 result += c;
             }
             return "\"" + result + "\"";
+        }
+
+        template <std::integral T>
+        static std::string FormatInteger(T value) {
+            return std::format("{:d}", value);
         }
 
         template <std::floating_point T>
@@ -446,7 +521,6 @@ namespace Dumper {
             if (!isConst) return "";
 
             auto type = fld->GetType();
-            auto typeE = type->GetTypeEnum();
             auto klass = Api::Class::FromType(type);
             if (klass->IsEnum()) {
                 type = klass->GetEnumBaseType();
@@ -456,7 +530,7 @@ namespace Dumper {
 
             auto appendInteger = [&]<std::integral T>() {
                 T v = fld->GetStaticValue<T>();
-                out += std::format("{:d}", v);
+                out += FormatInteger<T>(v);
             };
 
             auto appendFloat = [&]<std::floating_point T>() {
@@ -464,7 +538,7 @@ namespace Dumper {
                 out += FormatFloat<T>(v);
             };
 
-            switch (typeE) {
+            switch (type->GetTypeEnum()) {
                 case Api::TypeEnum::CHAR: {
                     uint16_t v = fld->GetStaticValue<uint16_t>();
                     
@@ -515,6 +589,74 @@ namespace Dumper {
 
             if (!out.empty()) {
                 out = " = " + out;
+            }
+
+            return out;
+        }
+
+        std::string FormatValue(Api::Object* obj) {
+            using namespace Api::TypeEnum;
+
+            if (!obj) return "null";
+
+            auto klass = obj->GetClass();
+            auto type = klass->GetType();
+
+            std::string out;
+
+            auto appendInteger = [&]<std::integral T>() {
+                T v = *(T*) obj->Unbox();
+                out += FormatInteger<T>(v);
+            };
+
+            auto appendFloat = [&]<std::floating_point T>() {
+                T v = *(T*) obj->Unbox();
+                out += FormatFloat<T>(v);
+            };
+
+            switch (type->GetTypeEnum()) {
+                case Api::TypeEnum::CHAR: {
+                    uint16_t v = *(uint16_t*) obj->Unbox();;
+                    
+                    out += "'";
+                    if (std::iscntrl(v)) {
+                        out += "\\x" + std::format("{:X}", v);
+                    } else if (v == '\'') {
+                        out += "\\'";
+                    } else {
+                        out += std::string(1, v);
+                    }
+                    out += "'";
+                } break;
+
+                case Api::TypeEnum::BOOLEAN: {
+                    bool value = *(bool*) obj->Unbox();;
+                    out += value ? "true" : "false";
+                } break;
+
+                case Api::TypeEnum::STRING: {
+                    auto* value = (Api::String*) obj;
+                    auto u16s = value->GetChars();
+                    auto s = U16ToU8(u16s);
+                    out += FormalStringLiteral(s);
+                } break;
+
+                case Api::TypeEnum::I1: appendInteger.operator()<int8_t>(); break;
+                case Api::TypeEnum::U1: appendInteger.operator()<uint8_t>(); break;
+                case Api::TypeEnum::I2: appendInteger.operator()<int16_t>(); break;
+                case Api::TypeEnum::U2: appendInteger.operator()<uint16_t>(); break;
+                case Api::TypeEnum::I4: appendInteger.operator()<int32_t>(); break;
+                case Api::TypeEnum::U4: appendInteger.operator()<uint32_t>(); break;
+                case Api::TypeEnum::I8: appendInteger.operator()<int64_t>(); break;
+                case Api::TypeEnum::U8: appendInteger.operator()<uint64_t>(); break;
+                case Api::TypeEnum::I:  appendInteger.operator()<intptr_t>(); break;
+                case Api::TypeEnum::U:  appendInteger.operator()<uintptr_t>(); break;
+                case Api::TypeEnum::R4: appendFloat.operator()<float>(); break;
+                case Api::TypeEnum::R8: appendFloat.operator()<double>(); break;
+            }
+
+            if (out.empty()) {
+                out += "?";
             }
 
             return out;
@@ -574,16 +716,19 @@ namespace Dumper {
             for (auto f : fields) {
                 auto fType = f->GetType();
                 auto fFlag = f->GetFlags();
+                bool isConst = fFlag & Api::FieldAttributes::LITERAL;
+                bool isStatic = fFlag & Api::FieldAttributes::STATIC;
+                if (isEnum && !isConst) continue;
 
                 out << INDENT;
-                out << FormatFieldAccessor(f);
-                out << FormatTypeName(fType);
-                out << " ";
+                if (!isEnum) out << FormatFieldAccessor(f);
+                if (!isEnum) out << FormatTypeName(fType);
+                if (!isEnum) out << " ";
                 out << f->GetName();
                 out << FormatFieldValue(f);
-                out << ";";
+                out << (!isEnum ? ";" : ",");
 
-                if (!(fFlag & Api::FieldAttributes::LITERAL) && !(fFlag & Api::FieldAttributes::STATIC)) {
+                if (!isConst && !isStatic) {
                     int off = f->GetOffset();
                     int pad = isValueType ? structBoxSize : 0;
                     if (off <= 0) {
@@ -651,8 +796,101 @@ namespace Dumper {
                 out << "\n";
 
                 out << INDENT;
-                out << std::format("// RVA: {} Offset: {}", FormatOffset(rva), FormatOffset(off));
+                out << std::format("// RVA: {} Offset: {} VA: {}", FormatOffset(rva), FormatOffset(off), FormatOffset(rva));
                 out << "\n";
+
+                auto o = m->GetObject();
+                auto methodKlass = o->GetClass();
+
+                // auto mtd = FindMethod(methodKlass, "GetCustomAttributesData", "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>", {}, true);
+                // if (mtd) {
+                //     auto lst = mtd->Invoke(o);
+                //     auto vec = ObjListToVector(lst);
+
+                //     if (!vec.empty()) {
+                //         static auto corlib = Api::Image::GetCorlib();
+                //         auto cadC = corlib->FindClass("System.Reflection", "CustomAttributeData");
+                //         auto mtdCAD = FindMethod(cadC, "get_AttributeType", "System.Type", {}, true);
+
+                //         for (int i = 0; i < vec.size(); i++) {
+                //             auto attData = vec[i];
+                //             if (!attData) continue;
+
+                //             auto attType = mtdCAD->Invoke(attData);
+                //             if (!attType) continue;
+
+                //             auto dataC = attData->GetClass();
+                //             if (!dataC) continue;
+
+                //             auto getCAs = FindMethod(dataC, "get_ConstructorArguments", "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>", {}, true);
+                //             if (!getCAs) continue;
+
+                //             auto getNAs = FindMethod(dataC, "get_NamedArguments", "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>", {}, true);
+                //             if (!getNAs) continue;
+
+                //             auto cataC = corlib->FindClass("System.Reflection", "CustomAttributeTypedArgument");
+                //             if (!cataC) continue;
+
+                //             auto cataV = FindMethod(cataC, "get_Value", "System.Object", {}, true);
+                //             if (!cataV) continue;
+
+                //             auto canaC = corlib->FindClass("System.Reflection", "CustomAttributeNamedArgument");
+                //             if (!canaC) continue;
+
+                //             auto canaMN = FindMethod(canaC, "get_MemberName", "System.String", {}, true);
+                //             if (!canaMN) continue;
+
+                //             auto canaTV = FindMethod(canaC, "get_TypedValue", "System.Reflection.CustomAttributeTypedArgument", {}, true);
+                //             if (!canaTV) continue;
+
+                //             auto cas = getCAs->Invoke(attData);
+                //             if (!cas) continue;
+
+                //             auto nas = getNAs->Invoke(attData);
+                //             if (!nas) continue;
+
+                //             auto casV = ObjListToVector(cas);
+                //             auto nasV = ObjListToVector(nas);
+
+                //             std::vector<std::string> argstrs;
+                //             for (int i = 0; i < casV.size(); i++) {
+                //                 auto cata = casV[i]->Unbox();
+                //                 if (!cata) continue;
+
+                //                 auto aV = cataV->Invoke(cata);
+                //                 argstrs.push_back(FormatValue(aV));
+                //             }
+                //             for (int i = 0; i < nasV.size(); i++) {
+                //                 auto cana = nasV[i]->Unbox();
+                //                 if (!cana) continue;
+
+                //                 auto memberNameS = (Api::String*) canaMN->Invoke(cana);
+                //                 auto memberName = U16ToU8(memberNameS->GetChars());
+
+                //                 auto cata = canaTV->Invoke(cana)->Unbox();
+                //                 auto aV = cataV->Invoke(cata);
+
+                //                 argstrs.push_back(memberName + " = " + FormatValue(aV));
+                //             }
+
+                //             auto attC = Api::Class::FromSystemType(attType);
+                //             auto attTypeName = attC->GetName();
+                //             if (attTypeName.ends_with("Attribute"))
+                //                 attTypeName.erase(attTypeName.size() - (sizeof("Attribute") - 1));
+
+                //             out << INDENT;
+                //             out << "[";
+                //             out << attTypeName;
+                //             if (!argstrs.empty()) {
+                //                 out << "(";
+                //                 out << JoinStr(argstrs, ", ");
+                //                 out << ")";
+                //             }
+                //             out << "]";
+                //             out << "\n";
+                //         }
+                //     }
+                // }
 
                 out << INDENT;
                 out << FormatMethodAccessor(m);
@@ -662,7 +900,8 @@ namespace Dumper {
                 
                 if ((isInflated || isGeneric) && arrGetValue && rmGetGenericArgs) {
                     auto to = m->GetObject();
-                    auto args = (Api::Array*) rmGetGenericArgs->Invoke(to);
+                    auto getGensV = to->GetVirtualMethod(rmGetGenericArgs);
+                    auto args = (Api::Array*) getGensV->Invoke(to);
                     int len = args->GetLength();
 
                     std::vector<std::string> pNames;
@@ -717,7 +956,7 @@ namespace Dumper {
             Thread* thr = Thread::Attach(dmn);
             Log::Debug("dumper: thread: 0x{:X}", (uintptr_t) thr);
 
-            Image* corlib = Domain::GetCorlib();
+            Image* corlib = Image::GetCorlib();
             Log::Debug("dumper: corlib: 0x{:X}", (uintptr_t) corlib);
 
             InitReflection(corlib);
@@ -735,7 +974,7 @@ namespace Dumper {
             }
             Log::Debug("dumper: obtained external files dir: {}", extDir);
 
-            std::filesystem::path dir = std::filesystem::path(extDir) / "dump";
+            std::filesystem::path dir = std::filesystem::path(extDir) / "runtime-dumper";
             if (std::filesystem::exists(dir)) {
                 std::filesystem::remove_all(dir);
                 Log::Debug("dumper: cleaned dir");

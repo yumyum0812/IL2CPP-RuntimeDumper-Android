@@ -1,0 +1,5 @@
+{
+    "build_type": "debug",
+    "min_api": 24,
+    "target_abis": ["arm64-v8a"]
+}

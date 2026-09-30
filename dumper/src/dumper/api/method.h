@@ -2,7 +2,7 @@
 
 #include <string>
 #include "functions.h"
-#include "type.h"
+#include <filesystem>
 
 namespace Dumper::Api {
     struct Method {
@@ -42,11 +42,6 @@ namespace Dumper::Api {
             return Functions::il2cpp_method_is_inflated(this);
         }
 
-        template<typename R, typename... A>
-        R Invoke(A... args) {
-            return ((R(*)(A...))methodPtr)(std::forward<A>(args)...);
-        }
-
         int GetFlags() {
             return Functions::il2cpp_method_get_flags(this, nullptr);
         }
@@ -67,12 +62,34 @@ namespace Dumper::Api {
                 }(), ...);
             }
 
-            void* exc = nullptr;
-            return Functions::il2cpp_runtime_invoke(this, obj, paramArray, &exc);
+            Object* exc = nullptr;
+            auto ret = Functions::il2cpp_runtime_invoke(this, obj, paramArray, &exc);
+            if (exc) {
+                auto k = Functions::il2cpp_object_get_class(exc);
+                auto aa = Functions::il2cpp_string_chars(*(String**)(uintptr_t(exc) + 0x18));
+                auto aaa = std::filesystem::path(aa).string();
+
+                Log::Debug("e: {}", Functions::il2cpp_class_get_name(k));
+                Log::Debug("  msg: {}", aaa);
+
+                Log::Debug("m: {}", this->GetName());
+                Log::Debug(" k: {}", Functions::il2cpp_class_get_name(this->GetClass()));
+                Log::Debug("obj: {}", Functions::il2cpp_class_get_name(Functions::il2cpp_object_get_class((Object*)obj)));
+            }
+            return ret;
+        }
+
+        template <typename T, typename... A>
+        T InvokeDirect(A... args) {
+            return reinterpret_cast<T(*)(A..., Method*)>(methodPtr)(std::forward<A>(args)..., nullptr);
         }
 
         Object* GetObject() {
             return Functions::il2cpp_method_get_object(this);
+        }
+
+        Class* GetClass() {
+            return Functions::il2cpp_method_get_class(this);
         }
     };
 }

@@ -3,9 +3,6 @@
 #include <string>
 #include <vector>
 #include "functions.h"
-#include "field.h"
-#include "method.h"
-#include "type.h"
 
 namespace Dumper::Api {
     struct Class {

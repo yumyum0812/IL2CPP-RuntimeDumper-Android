@@ -70,6 +70,7 @@ namespace Dumper::Api::Functions {
 
     #define DUMPER_API_DEF(sym, F) auto sym = _ApiCall<F>(#sym)
 
+    DUMPER_API_DEF(il2cpp_get_corlib, Image*());
 
     DUMPER_API_DEF(il2cpp_domain_get, Domain*());
     DUMPER_API_DEF(il2cpp_domain_get_assemblies, Assembly**(Domain* domain, size_t* szOut));
@@ -111,6 +112,7 @@ namespace Dumper::Api::Functions {
     DUMPER_API_DEF(il2cpp_field_static_get_value, void(Field* field, void* value));
 
     DUMPER_API_DEF(il2cpp_method_get_name, const char*(Method* method));
+    DUMPER_API_DEF(il2cpp_method_get_class, Class*(Method* method));
     DUMPER_API_DEF(il2cpp_method_get_return_type, Type*(Method* method));
     DUMPER_API_DEF(il2cpp_method_get_param, Type*(Method* method, size_t index));
     DUMPER_API_DEF(il2cpp_method_get_param_count, size_t(Method* method));
@@ -130,12 +132,16 @@ namespace Dumper::Api::Functions {
     DUMPER_API_DEF(il2cpp_property_get_set_method, Method*(Property* prop));
     DUMPER_API_DEF(il2cpp_property_get_name, const char*(Property* prop));
 
+    DUMPER_API_DEF(il2cpp_object_get_class, Class*(Object* obj));
+    DUMPER_API_DEF(il2cpp_object_unbox, void*(Object* obj));
+    DUMPER_API_DEF(il2cpp_object_get_virtual_method, Method*(Object* obj, Method* base));
+
     DUMPER_API_DEF(il2cpp_string_chars, const char16_t*(String* s));
     DUMPER_API_DEF(il2cpp_string_length, int(String* s));
 
     DUMPER_API_DEF(il2cpp_array_length, int(Array* typ));
-    DUMPER_API_DEF(il2cpp_get_corlib, Image*());
-    DUMPER_API_DEF(il2cpp_runtime_invoke, Object*(Method* met, void* obj, void** args, void** exc));
+
+    DUMPER_API_DEF(il2cpp_runtime_invoke, Object*(Method* met, void* obj, void** args, Object** exc));
 
 
     class LibraryResolver {
