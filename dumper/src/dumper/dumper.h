@@ -40,11 +40,11 @@ namespace Dumper {
         Api::Method* tGetGenericArgs = nullptr;
         Api::Method* tGetField = nullptr;
         Api::Method* tGetProp = nullptr;
-        Api::Method* miGetAttrs = nullptr;
         Api::Method* mGetGenericArgs = nullptr;
         Api::Method* getUnityVer = nullptr;
 
         struct {
+            Api::Method* getAttrs = nullptr;
             Api::Method* getAttType = nullptr;
             Api::Method* getConstructorArgs = nullptr;
             Api::Method* getNamedArgs = nullptr;
@@ -491,29 +491,18 @@ namespace Dumper {
         }
 
         void InitReflectionAtt(Api::Image* corlib) {
-            auto memberInfoC = corlib->FindClass("System.Reflection", "MemberInfo");
-            if (!memberInfoC) {
-                Log::Warn("dumper: class MemberInfo not found");
-                return;
-            }
-
-            miGetAttrs = FindMethod(
-                memberInfoC,
-                "GetCustomAttributesData",
-                "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
-                {}
-            );
-            if (!miGetAttrs) {
-                Log::Warn("dumper: method MemberInfo.GetCustomAttributesData not found");
-                return;
-            }
-
             auto attC = corlib->FindClass("System.Reflection", "CustomAttributeData");
-            {
-                if (!attC) {
-                    Log::Warn("dumper: class CustomAttributeData not found");
-                    return;
-                }
+            if (!attC) {
+                Log::Warn("dumper: class CustomAttributeData not found");
+            } else {
+                attM.getAttrs = FindMethod(
+                    attC,
+                    "GetCustomAttributes",
+                    "System.Collections.Generic.IList<System.Reflection.CustomAttributeData",
+                    {"System.Reflection.MemberInfo"}
+                );
+                if (!attM.getAttrs)
+                    Log::Warn("dumper: method CustomAttributeData.GetCustomAttributes not found");
                 
                 attM.getAttType = FindMethod(
                     attC,
@@ -521,10 +510,8 @@ namespace Dumper {
                     "System.Type",
                     {}
                 );
-                if (!attM.getAttType) {
+                if (!attM.getAttType)
                     Log::Warn("dumper: method CustomAttributeData.get_AttributeType not found");
-                    return;
-                }
 
                 attM.getConstructorArgs = FindMethod(
                     attC,
@@ -532,10 +519,8 @@ namespace Dumper {
                     "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>",
                     {}
                 );
-                if (!attM.getConstructorArgs) {
+                if (!attM.getConstructorArgs)
                     Log::Warn("dumper: method CustomAttributeData.get_ConstructorArguments not found");
-                    return;
-                }
 
                 attM.getNamedArgs = FindMethod(
                     attC,
@@ -543,55 +528,45 @@ namespace Dumper {
                     "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>",
                     {}
                 );
-                if (!attM.getNamedArgs) {
+                if (!attM.getNamedArgs)
                     Log::Warn("dumper: method CustomAttributeData.get_NamedArguments not found");
-                    return;
-                }
             }
 
             auto typedArgC = corlib->FindClass("System.Reflection", "CustomAttributeTypedArgument");
             if (!typedArgC) {
                 Log::Warn("dumper: method CustomAttributeTypedArgument not found");
-                return;
-            }
-
-            attTypedArgM.getValue = FindMethod(
-                typedArgC,
-                "get_Value",
-                "System.Object",
-                {}
-            );
-            if (!attTypedArgM.getValue) {
-                Log::Warn("dumper: method CustomAttributeTypedArgument.get_Value not found");
-                return;
+            } else {
+                attTypedArgM.getValue = FindMethod(
+                    typedArgC,
+                    "get_Value",
+                    "System.Object",
+                    {}
+                );
+                if (!attTypedArgM.getValue)
+                    Log::Warn("dumper: method CustomAttributeTypedArgument.get_Value not found");
             }
 
             auto namedArgC = corlib->FindClass("System.Reflection", "CustomAttributeNamedArgument");
             if (!namedArgC) {
                 Log::Warn("dumper: class CustomAttributeNamedArgument not found");
-                return;
-            }
+            } else {
+                attNamedArgM.getName = FindMethod(
+                    namedArgC,
+                    "get_MemberName",
+                    "System.String",
+                    {}
+                );
+                if (!attNamedArgM.getName)
+                    Log::Warn("dumper: method CustomAttributeNamedArgument.get_MemberName not found");
 
-            attNamedArgM.getName = FindMethod(
-                namedArgC,
-                "get_MemberName",
-                "System.String",
-                {}
-            );
-            if (!attNamedArgM.getName) {
-                Log::Warn("dumper: method CustomAttributeNamedArgument.get_MemberName not found");
-                return;
-            }
-
-            attNamedArgM.getTypedValue = FindMethod(
-                namedArgC,
-                "get_TypedValue",
-                "System.Reflection.CustomAttributeTypedArgument",
-                {}
-            );
-            if (!attNamedArgM.getTypedValue) {
-                Log::Warn("dumper: method CustomAttributeNamedArgument.get_TypedValue not found");
-                return;
+                attNamedArgM.getTypedValue = FindMethod(
+                    namedArgC,
+                    "get_TypedValue",
+                    "System.Reflection.CustomAttributeTypedArgument",
+                    {}
+                );
+                if (!attNamedArgM.getTypedValue)
+                    Log::Warn("dumper: method CustomAttributeNamedArgument.get_TypedValue not found");
             }
         }
 
@@ -843,13 +818,13 @@ namespace Dumper {
         void DoAttr(Api::Object* memberInfo, std::ofstream& out, int ind = 1) {
             if (!memberInfo) return;
 
-            if (!miGetAttrs ||
+            if (!attM.getAttrs ||
                 !attM.getAttType || !attM.getConstructorArgs || !attM.getNamedArgs ||
                 !attTypedArgM.getValue || !attNamedArgM.getTypedValue ||
                 !attNamedArgM.getName
             ) return;
 
-            Api::Method* vm = memberInfo->GetVirtualMethod(miGetAttrs);
+            Api::Method* vm = memberInfo->GetVirtualMethod(attM.getAttrs);
             if (!vm) return;
 
             Api::Object* attrs = vm->Invoke(memberInfo);

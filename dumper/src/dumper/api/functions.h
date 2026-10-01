@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <thread>
 #include <map>
 #include <xdl.h>
@@ -61,6 +62,8 @@ namespace Dumper::Api::Functions {
         }
 
         R operator() (A... a) const {
+            if (!fn)
+                throw std::runtime_error(std::format("call to null function: {}", _name));
             return fn(std::forward<A>(a)...);
         }
 
