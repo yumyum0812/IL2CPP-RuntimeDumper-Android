@@ -42,6 +42,7 @@ namespace Dumper {
         Api::Method* tGetProp = nullptr;
         Api::Method* miGetAttrs = nullptr;
         Api::Method* mGetGenericArgs = nullptr;
+        Api::Method* getUnityVer = nullptr;
 
         struct {
             Api::Method* getAttType = nullptr;
@@ -385,7 +386,10 @@ namespace Dumper {
             auto klass = obj->GetClass();
 
             auto getCount = FindMethodI(klass, "get_Count", "System.Int32", {});
+            if (!getCount) return {};
+
             auto getItem = FindMethodI(klass, "get_Item", "", {"System.Int32"});
+            if (!getItem) return {};
 
             getCount = obj->GetVirtualMethod(getCount);
             getItem = obj->GetVirtualMethod(getItem);
@@ -409,7 +413,8 @@ namespace Dumper {
             vec.reserve(count);
 
             for (int i = 0; i < count; i++) {
-                vec.push_back(getItem->Invoke(obj, i));
+                auto v = getItem->Invoke(obj, i);
+                vec.push_back(v);
             }
 
             return vec;
@@ -458,6 +463,31 @@ namespace Dumper {
                 if (!arrGetValue)
                     Log::Warn("dumper: method Array.GetValue not found");
             }
+
+            auto ueImg = FindImage("UnityEngine.CoreModule.dll");
+            if (!ueImg) {
+                Log::Warn("dumper: UnityEngine.CoreModule.dll not found");
+            } else {
+                auto c = ueImg->FindClass("UnityEngine", "Application");
+                if (!c) {
+                    Log::Warn("dumper: Application not found");
+                } else {
+                    getUnityVer = FindMethod(c, "get_unityVersion", "System.String", {});
+                    if (!getUnityVer) {
+                        Log::Warn("dumper: UnityEngine.get_unityVersion not found");
+                    }
+                }
+            }
+        }
+
+        Api::Image* FindImage(const std::string& name) {
+            auto domain = Api::Domain::GetInstance();
+            auto asms = domain->GetAssemblies();
+            for (auto a : asms) {
+                auto img = a->GetImage();
+                if (img->GetName() == name) return img;
+            }
+            return nullptr;
         }
 
         void InitReflectionAtt(Api::Image* corlib) {
@@ -811,72 +841,84 @@ namespace Dumper {
         }
 
         void DoAttr(Api::Object* memberInfo, std::ofstream& out, int ind = 1) {
-            if (
-                miGetAttrs &&
-                attM.getAttType && attM.getConstructorArgs && attM.getNamedArgs &&
-                attTypedArgM.getValue && attNamedArgM.getTypedValue &&
-                attNamedArgM.getName
-            ) {
-                Api::Object* attrs = memberInfo->GetVirtualMethod(miGetAttrs)->Invoke(memberInfo);
+            if (!memberInfo) return;
+
+            if (!miGetAttrs ||
+                !attM.getAttType || !attM.getConstructorArgs || !attM.getNamedArgs ||
+                !attTypedArgM.getValue || !attNamedArgM.getTypedValue ||
+                !attNamedArgM.getName
+            ) return;
+
+            Api::Method* vm = memberInfo->GetVirtualMethod(miGetAttrs);
+            if (!vm) return;
+
+            Api::Object* attrs = vm->Invoke(memberInfo);
+            if (!attrs) return;
+            
+            auto attrsV = ObjListToVector(attrs);
+            for (Api::Object* attr : attrsV) {
+                if (!attr) continue;
+
+                Api::Object* attTypeO = attM.getAttType->Invoke(attr);
+                if (!attTypeO) continue;
+
+                auto attC = Api::Class::FromSystemType(attTypeO);
+                if (!attC) continue;
                 
-                auto attrsV = ObjListToVector(attrs);
-                for (int i = 0; i < attrsV.size(); i++) {
-                    Api::Object* attr = attrsV[i];
-                    if (!attr) continue;
+                auto attTypeName = attC->GetName();
+                RemoveSuffix(attTypeName, "Attribute");
 
-                    Api::Object* attTypeO = attM.getAttType->Invoke(attr);
-                    if (!attTypeO) continue;
-
-                    auto attC = Api::Class::FromSystemType(attTypeO);
-                    auto attTypeName = attC->GetName();
-                    RemoveSuffix(attTypeName, "Attribute");
-
-                    for (int i = 0; i < ind; i++) {
-                        out << INDENT;
-                    }
-                    out << "[";
-                    out << attTypeName;
-
-                    Api::Object* constrs = attM.getConstructorArgs->Invoke(attr);
-                    if (!constrs) continue;
-
-                    Api::Object* nameds = attM.getNamedArgs->Invoke(attr);
-                    if (!nameds) continue;
-
-                    auto constrsV = ObjListToVector(constrs);
-                    auto namedsV = ObjListToVector(nameds);
-
-                    std::vector<std::string> argStrs;
-                    for (Api::Object* typed : constrsV) {
-                        if (!typed) continue;
-                        void* typedUnbox = typed->Unbox();
-
-                        Api::Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
-                        argStrs.push_back(FormatObject(v));
-                    }
-                    for (Api::Object* named : namedsV) {
-                        if (!named) continue;
-                        void* namedUnbox = named->Unbox();
-
-                        Api::String* memberNameS = (Api::String*) attNamedArgM.getName->Invoke(namedUnbox);
-                        auto memberName = memberNameS ? U16ToU8(memberNameS->GetChars()) : "null";
-
-                        Api::Object* typed = attNamedArgM.getTypedValue->Invoke(namedUnbox);
-                        if (!typed) continue;
-                        void* typedUnbox = typed->Unbox();
-
-                        Api::Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
-                        argStrs.push_back(memberName + " = " + FormatObject(v));
-                    }
-
-                    if (!argStrs.empty()) {
-                        out << "(";
-                        out << JoinStr(argStrs, ", ");
-                        out << ")";
-                    }
-                    out << "]";
-                    out << "\n";
+                for (int i = 0; i < ind; i++) {
+                    out << INDENT;
                 }
+                out << "[";
+                out << attTypeName;
+
+                Api::Object* constrs = attM.getConstructorArgs->Invoke(attr);
+                if (!constrs) continue;
+
+                Api::Object* nameds = attM.getNamedArgs->Invoke(attr);
+                if (!nameds) continue;
+
+                auto constrsV = ObjListToVector(constrs);
+                auto namedsV = ObjListToVector(nameds);
+
+                std::vector<std::string> argStrs;
+                for (Api::Object* typed : constrsV) {
+                    if (!typed) continue;
+
+                    void* typedUnbox = typed->Unbox();
+                    if (!typedUnbox) continue;
+
+                    Api::Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
+                    argStrs.push_back(FormatObject(v));
+                }
+                for (Api::Object* named : namedsV) {
+                    if (!named) continue;
+
+                    void* namedUnbox = named->Unbox();
+                    if (!namedUnbox) continue;
+
+                    Api::String* memberNameS = (Api::String*) attNamedArgM.getName->Invoke(namedUnbox);
+                    auto memberName = memberNameS ? U16ToU8(memberNameS->GetChars()) : "null";
+
+                    Api::Object* typed = attNamedArgM.getTypedValue->Invoke(namedUnbox);
+                    if (!typed) continue;
+
+                    void* typedUnbox = typed->Unbox();
+                    if (!typedUnbox) continue;
+
+                    Api::Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
+                    argStrs.push_back(memberName + " = " + FormatObject(v));
+                }
+
+                if (!argStrs.empty()) {
+                    out << "(";
+                    out << JoinStr(argStrs, ", ");
+                    out << ")";
+                }
+                out << "]";
+                out << "\n";
             }
         }
 
@@ -1076,32 +1118,76 @@ namespace Dumper {
 
             Log::Debug("dumper: running...");
 
+            auto extDirS = GetAppExtDir();
+            if (extDirS.empty()) {
+                Log::Debug("dumper: cannot obtain external files dir");
+                return;
+            }
+            Log::Debug("dumper: obtained external files dir: {}", extDirS);
+
+            std::filesystem::path extDir(extDirS);
+
+            std::map<std::string, std::string> symMap;
+
+            auto mapFileP = extDir / "symbol_map.txt";
+            if (std::filesystem::exists(mapFileP)) {
+                Log::Debug("dumper: symbol_map.txt was found");
+
+                std::ifstream file(mapFileP);
+
+                std::string line;
+                while (std::getline(file, line)) {
+                    auto pos = line.find(' ');
+                    if (pos == std::string::npos)
+                        continue;
+
+                    auto key   = line.substr(0, pos);
+                    auto value = line.substr(pos + 1);
+
+                    symMap[key] = value;
+                }
+
+                Log::Debug("dumper: loaded {:d} keys", symMap.size());
+            }
+
             auto libRes = Functions::LibraryResolver();
-            auto res = SymApiResolver();
+            auto res = SymApiResolver(symMap);
 
             bool init = Api::Functions::InitApi(libRes, res);
             if (!init) {
-                Log::Debug("dumper: initialization failed");
+                Log::Error("dumper: initialization failed");
                 return;
             }
 
-            libBase = libRes.GetBaseAddress();
-            Log::Debug("dumper: base: {:#x}", libBase);
-            if (libBase == 0) {
-                Log::Debug("dumper: warning: base address got null");
-            }
-
             Domain* dmn = Domain::GetInstance();
+            if (!dmn) {
+                Log::Error("dumper: cannot obtain domain");
+                return;
+            }
             Log::Debug("dumper: domain: 0x{:X}", (uintptr_t) dmn);
 
             Thread* thr = Thread::Attach(dmn);
+            if (!thr) {
+                Log::Error("dumper: cannot attach thread");
+                return;
+            }
             Log::Debug("dumper: thread: 0x{:X}", (uintptr_t) thr);
 
             Image* corlib = Image::GetCorlib();
+            if (!corlib) {
+                Log::Error("dumper: cannot obtain mscorlib.dll");
+                return;
+            }
             Log::Debug("dumper: corlib: 0x{:X}", (uintptr_t) corlib);
 
             InitReflection(corlib);
             InitReflectionAtt(corlib);
+
+            if (getUnityVer) {
+                auto verS = (Api::String*) getUnityVer->Invoke(nullptr);
+                auto ver = verS ? U16ToU8(verS->GetChars()) : "null";
+                Log::Debug("dumper: unity version: {}", ver);
+            }
 
             auto nm = corlib->GetName();
             Log::Debug("dumper: corlib: {}", nm);
@@ -1109,14 +1195,7 @@ namespace Dumper {
             auto asms = dmn->GetAssemblies();
             Log::Debug("dumper: assemblies: {:d}", asms.size());
 
-            auto extDir = GetAppExtDir();
-            if (extDir.empty()) {
-                Log::Debug("dumper: cannot obtain external files dir");
-                return;
-            }
-            Log::Debug("dumper: obtained external files dir: {}", extDir);
-
-            std::filesystem::path dir = std::filesystem::path(extDir) / "runtime-dumper";
+            std::filesystem::path dir = std::filesystem::path(extDirS) / "runtime-dumper";
             if (std::filesystem::exists(dir)) {
                 std::filesystem::remove_all(dir);
                 Log::Debug("dumper: cleaned dir");

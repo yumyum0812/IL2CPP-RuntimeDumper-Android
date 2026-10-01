@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <thread>
+#include <map>
 #include <xdl.h>
 #include "../log.h"
 
@@ -201,7 +202,10 @@ namespace Dumper::Api::Functions {
         }
 
         void* ResolveSymbol(const std::string& name) {
-            return xdl_sym(handle, name.c_str(), nullptr);
+            auto s = xdl_sym(handle, name.c_str(), nullptr);
+            if (s) return s;
+
+            return xdl_dsym(handle, name.c_str(), nullptr);
         }
     };
 
@@ -214,13 +218,23 @@ namespace Dumper::Api::Functions {
 
 
     class SymApiResolver : public ApiResolver {
+        std::map<std::string, std::string> symbolMap;
     public:
+        SymApiResolver(const std::map<std::string, std::string>& symbolMap= {}) {
+            this->symbolMap = symbolMap;
+        }
+
         void Resolve(LibraryResolver& lf) override {
             for (auto f : _apiCalls) {
-                auto name = f->Name();
-                void* ptr = lf.ResolveSymbol(name);
+                auto funcName = f->Name();
+
+                auto symName = funcName;
+                if (this->symbolMap.contains(funcName))
+                    symName = this->symbolMap.at(funcName);
+
+                void* ptr = lf.ResolveSymbol(symName);
                 if (!ptr) {
-                    Log::Debug("apiresolver: symbol not found: {}", name);
+                    Log::Debug("apiresolver: symbol not found for {}: {}", funcName, symName);
                     continue;
                 }
                 f->Assign(ptr);
@@ -235,6 +249,21 @@ namespace Dumper::Api::Functions {
         
         Log::Debug("init: resolving api...");
         res.Resolve(libRes);
+
+        // auto domain = ((void*(*)())(libRes.GetBaseAddress() + 0x1D75660))();
+        // Log::Debug("domain: {:X}", uintptr_t(domain));
+
+        // auto thread = ((void*(*)(void*))(libRes.GetBaseAddress() + 0x1D79D00))(domain);
+        // Log::Debug("thread: {:X}", uintptr_t(thread));
+        
+        // auto img = ((void*(*)())(libRes.GetBaseAddress() + 0x1d725a0))();
+        // Log::Debug("image: {:X}", uintptr_t(img));
+
+        // auto nm = ((const char*(*)(void*))(libRes.GetBaseAddress() + 0x1d7b0f4))(img);
+        // Log::Debug("image name: {}", nm);
+
+        // ((void*(*)(void*))(libRes.GetBaseAddress() + 0x1D79DB8))(thread);
+        // Log::Debug("detach ok");
 
         bool ok = true;
         for (auto f : _apiCalls) {

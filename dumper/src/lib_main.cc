@@ -3,6 +3,7 @@
 
 
 void ThreadMain() {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
     auto dumper = Dumper::RuntimeDumper();
     dumper.Run();
 }
