@@ -440,7 +440,7 @@ std::vector<Object*> ObjListToVector(Object* obj) {
 void InitReflection(Image* corlib) {
     auto objC = corlib->FindClass("System", "Object");
     if (!objC) {
-        Log::Warn("Object not found");
+        Log::Warn("class object not found");
     } else {
         structBoxSize = objC->GetInstanceSize();
         Log::Debug("object box size: 0x{:X}", structBoxSize);
@@ -759,13 +759,13 @@ std::string FormatObject(Object* obj) {
             uint16_t v = *(uint16_t*) obj->Unbox();;
             
             out += "'";
-            if (std::iscntrl(v)) {
+            if (std::iscntrl(v))
                 out += "\\x" + std::format("{:X}", v);
-            } else if (v == '\'') {
+            else if (v == '\'')
                 out += "\\'";
-            } else {
+            else
                 out += std::string(1, v);
-            }
+            
             out += "'";
         } break;
 
@@ -798,7 +798,7 @@ std::string FormatObject(Object* obj) {
                 auto tName = Class::FromSystemType(obj)->GetType();
                 return "typeof(" + FormatTypeName(tName) + ")";
             }
-        }break;
+        } break;
     }
 
     if (out.empty())
