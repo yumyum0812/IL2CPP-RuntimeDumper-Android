@@ -1069,7 +1069,7 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         out << "(";
         out << JoinStr(parFmts, ", ");
         out << ")";
-        out << (isAbstract ? ";" : "{ }");
+        out << (isAbstract ? ";" : " { }");
         out << FormatMethodSpecial(m);
         out << "\n";
     }
