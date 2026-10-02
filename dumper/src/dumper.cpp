@@ -1008,7 +1008,7 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         auto rt = m->GetReturnType();
         bool isGeneric = m->IsGeneric();
         bool isInflated = m->IsInflated();
-        bool isAbstract = (m->GetFlags() | MethodAttributes::ABSTRACT) != 0;
+        bool isAbstract = (m->GetFlags() & MethodAttributes::ABSTRACT) != 0;
 
         std::vector<std::string> parFmts;
 
