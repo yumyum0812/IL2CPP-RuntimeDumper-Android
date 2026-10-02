@@ -478,177 +478,227 @@ std::vector<Object*> ObjListToVector(Object* obj, const std::string& tName = "")
     return vec;
 }
 
-void InitReflection(Image* corlib) {
-    auto objC = corlib->FindClass("System", "Object");
-    if (!objC) {
-        Log::Warn("class object not found");
-    } else {
-        structBoxSize = objC->GetInstanceSize();
-        Log::Debug("object box size: 0x{:X}", structBoxSize);
+void FindReflectionMethod(Class* klass, const std::string& name, const std::string& rt, const std::vector<std::string>& params, Method** method) {
+    if(!(*method = FindMethod(typeC, name, rt, params)))
+        Log::Warn("method {}.{} not found", klass->GetName(), name);
+}
+
+void InitUnityReflection() {
+    Image* image = FindImage("UnityEngine.CoreModule.dll");
+    if (!image) {
+        Log::Warn("image UnityEngine.CoreModule.dll not found");
+        return;
     }
+
+    Class* c = image->FindClass("UnityEngine", "Application");
+    if (!c) {
+        Log::Warn("class Application not found");
+        return;
+    }
+
+    FindReflectionMethod(typeC,
+        "get_unityVersion",
+        "System.String",
+        {},
+        &getUnityVer
+    );
+}
+
+void InitBoxSize(Image* corlib) {
+    Class* objC = corlib->FindClass("System", "Object");
+    if (!objC) {
+        Log::Warn("class Object not found");
+        return;
+    }
+
+    structBoxSize = objC->GetInstanceSize();
+    Log::Debug("object box size: 0x{:X}", structBoxSize);
+}
+
+void InitReflection(Image* corlib) {
+    InitBoxSize(corlib);
 
     typeC = corlib->FindClass("System", "Type");
     if (!typeC) {
         Log::Warn("class Type not found");
     } else {
-        tGetGenericArgs = FindMethod(typeC, "GetGenericArguments", "System.Type[]", {});
-        if (!tGetGenericArgs)
-            Log::Warn("method Type.GetGenericArguments not found");
-
-        tGetField = FindMethod(typeC, "GetField", "System.Reflection.FieldInfo", {"System.String"});
-        if (!tGetField)
-            Log::Warn("method Type.GetField not found");
-
-        tGetProp = FindMethod(typeC, "GetProperty", "System.Reflection.PropertyInfo", {"System.String"});
-        if (!tGetProp)
-            Log::Warn("method Type.GetProperty not found");
+        FindReflectionMethod(
+            typeC,
+            "GetGenericArguments",
+            "System.Type[]",
+            {},
+            &tGetGenericArgs
+        );
+        FindReflectionMethod(
+            typeC,
+            "GetField",
+            "System.Reflection.FieldInfo",
+            {"System.String"},
+            &tGetField
+        );
+        FindReflectionMethod(typeC,
+            "GetProperty",
+            "System.Reflection.PropertyInfo",
+            {"System.String"},
+            &tGetField
+        );
     }
 
-    auto methodC = corlib->FindClass("System.Reflection", "MethodBase");
+    Class* methodC = corlib->FindClass("System.Reflection", "MethodBase");
     if (!methodC) {
-        Log::Warn("MethodBase not found");
+        Log::Warn("class MethodBase not found");
     } else {
-        mGetGenericArgs = FindMethod(methodC, "GetGenericArguments", "System.Type[]", {});
-        if (!mGetGenericArgs)
-            Log::Warn("method MethodBase.GetGenericArguments not found");
-
-        mGetParams = FindMethod(methodC, "GetParameters", "System.Reflection.ParameterInfo[]", {});
-        if (!mGetParams)
-            Log::Warn("method MethodBase.GetParameters not found");
+        FindReflectionMethod(
+            typeC,
+            "GetGenericArguments",
+            "System.Reflection.PropertyInfo",
+            {"System.String"},
+            &mGetGenericArgs
+        );
+        FindReflectionMethod(
+            typeC,
+            "GetParameters",
+            "System.Reflection.ParameterInfo[]",
+            {},
+            &mGetParams
+        );
     }
 
-    auto parC = corlib->FindClass("System.Reflection", "ParameterInfo");
+    Class* parC = corlib->FindClass("System.Reflection", "ParameterInfo");
     if (!parC) {
-        Log::Warn("ParameterInfo not found");
+        Log::Warn("class ParameterInfo not found");
     } else {
-        paramM.getAttrs = FindMethod(parC, "get_Attributes", "System.Reflection.ParameterAttributes", {});
-        if (!paramM.getAttrs)
-            Log::Warn("method ParameterInfo.get_Attributes not found");
-
-        paramM.getDefValue = FindMethod(parC, "get_DefaultValue", "System.Object", {});
-        if (!paramM.getDefValue)
-            Log::Warn("method ParameterInfo.get_DefaultValue not found");
-
-        paramM.getName = FindMethod(parC, "get_Name", "System.String", {});
-        if (!paramM.getName)
-            Log::Warn("method ParameterInfo.get_Name not found");
-
-        paramM.getType = FindMethod(parC, "get_ParameterType", "System.Type", {});
-        if (!paramM.getType)
-            Log::Warn("method ParameterInfo.get_Type not found");
+        FindReflectionMethod(
+            typeC,
+            "get_Attributes",
+            "System.Reflection.ParameterAttributes",
+            {},
+            &paramM.getAttrs
+        );
+        FindReflectionMethod(
+            typeC,
+            "get_DefaultValue",
+            "System.Object",
+            {},
+            &paramM.getDefValue
+        );
+        FindReflectionMethod(
+            typeC,
+            "get_Name",
+            "System.String",
+            {},
+            &paramM.getName
+        );
+        FindReflectionMethod(
+            typeC,
+            "get_ParameterType",
+            "System.Type",
+            {},
+            &paramM.getType
+        );
     }
 
-    auto arrC = corlib->FindClass("System", "Array");
+    Class* arrC = corlib->FindClass("System", "Array");
     if (!arrC) {
-        Log::Warn("System.Array not found");
+        Log::Warn("class Array not found");
     } else {
-        arrGetValue = FindMethod(arrC, "GetValue", "System.Object", {"System.Int32"});
-        if (!arrGetValue)
-            Log::Warn("method Array.GetValue not found");
+        FindReflectionMethod(
+            arrC,
+            "GetValue",
+            "System.Object",
+            {"System.Int32"},
+            &arrGetValue
+        );
     }
 
-    auto ueImg = FindImage("UnityEngine.CoreModule.dll");
-    if (!ueImg) {
-        Log::Warn("UnityEngine.CoreModule.dll not found");
-    } else {
-        auto c = ueImg->FindClass("UnityEngine", "Application");
-        if (!c) {
-            Log::Warn("Application not found");
-        } else {
-            getUnityVer = FindMethod(c, "get_unityVersion", "System.String", {});
-            if (!getUnityVer) {
-                Log::Warn("UnityEngine.get_unityVersion not found");
-            }
-        }
-    }
+    InitUnityReflection();
 }
 
 void InitReflectionAtt(Image* corlib) {
-    auto attC = corlib->FindClass("System.Reflection", "CustomAttributeData");
+    Class* attC = corlib->FindClass("System.Reflection", "CustomAttributeData");
     if (!attC) {
         Log::Warn("class CustomAttributeData not found");
     } else {
-        attM.getAttrs = FindMethod(
-            attC,
+        FindReflectionMethod(attC,
             "GetCustomAttributes",
             "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
-            {"System.Reflection.MemberInfo"}
+            {"System.Reflection.MemberInfo"},
+            &attM.getAttrs
         );
-        if (!attM.getAttrs)
-            Log::Warn("method CustomAttributeData.GetCustomAttributes not found");
 
-        attM.getAttrsP = FindMethod(
+        FindReflectionMethod(
             attC,
             "GetCustomAttributes",
             "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
-            {"System.Reflection.ParameterInfo"}
+            {"System.Reflection.ParameterInfo"},
+            &attM.getAttrsP
         );
-        if (!attM.getAttrsP)
-            Log::Warn("method CustomAttributeData.GetCustomAttributes(P) not found");
-        
-        attM.getAttType = FindMethod(
+
+        FindReflectionMethod(
             attC,
             "get_AttributeType",
             "System.Type",
-            {}
+            {},
+            &attM.getAttType
         );
-        if (!attM.getAttType)
-            Log::Warn("method CustomAttributeData.get_AttributeType not found");
 
-        attM.getCtorArgs = FindMethod(
+        FindReflectionMethod(
             attC,
             "get_ConstructorArguments",
             "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>",
-            {}
+            {},
+            &attM.getCtorArgs
         );
-        if (!attM.getCtorArgs)
-            Log::Warn("method CustomAttributeData.get_ConstructorArguments not found");
 
-        attM.getNamedArgs = FindMethod(
+        FindReflectionMethod(
             attC,
             "get_NamedArguments",
             "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>",
-            {}
+            {},
+            &attM.getNamedArgs
         );
-        if (!attM.getNamedArgs)
-            Log::Warn("method CustomAttributeData.get_NamedArguments not found");
     }
 
-    auto typedArgC = corlib->FindClass("System.Reflection", "CustomAttributeTypedArgument");
+    Class* typedArgC = corlib->FindClass(
+        "System.Reflection",
+        "CustomAttributeTypedArgument"
+    );
+
     if (!typedArgC) {
-        Log::Warn("method CustomAttributeTypedArgument not found");
+        Log::Warn("class CustomAttributeTypedArgument not found");
     } else {
-        attTypedArgM.getValue = FindMethod(
+        FindReflectionMethod(
             typedArgC,
             "get_Value",
             "System.Object",
-            {}
+            {},
+            &attTypedArgM.getValue
         );
-        if (!attTypedArgM.getValue)
-            Log::Warn("method CustomAttributeTypedArgument.get_Value not found");
     }
 
-    auto namedArgC = corlib->FindClass("System.Reflection", "CustomAttributeNamedArgument");
+    Class* namedArgC = corlib->FindClass(
+        "System.Reflection",
+        "CustomAttributeNamedArgument"
+    );
+
     if (!namedArgC) {
         Log::Warn("class CustomAttributeNamedArgument not found");
     } else {
-        attNamedArgM.getName = FindMethod(
+        FindReflectionMethod(
             namedArgC,
             "get_MemberName",
             "System.String",
-            {}
+            {},
+            &attNamedArgM.getName
         );
-        if (!attNamedArgM.getName)
-            Log::Warn("method CustomAttributeNamedArgument.get_MemberName not found");
 
-        attNamedArgM.getTypedValue = FindMethod(
+        FindReflectionMethod(
             namedArgC,
             "get_TypedValue",
             "System.Reflection.CustomAttributeTypedArgument",
-            {}
+            {},
+            &attNamedArgM.getTypedValue
         );
-        if (!attNamedArgM.getTypedValue)
-            Log::Warn("method CustomAttributeNamedArgument.get_TypedValue not found");
     }
 }
 
