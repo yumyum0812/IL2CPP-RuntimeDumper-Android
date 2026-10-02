@@ -49,7 +49,7 @@ public:
         }
     }
 
-    uintptr_t RVAToOffset(uintptr_t rva) {
+    uintptr_t RvaToOffset(uintptr_t rva) {
         rva = NormalizePointer(rva);
         
         for (const auto& seg : segments) {
@@ -82,8 +82,9 @@ public:
 
 class SymApiResolver : public ApiResolver {
     std::map<std::string, std::string> symbolMap;
+
 public:
-    SymApiResolver(const std::map<std::string, std::string>& symbolMap= {}) {
+    SymApiResolver(const std::map<std::string, std::string>& symbolMap = {}) {
         this->symbolMap = symbolMap;
     }
 
@@ -101,6 +102,23 @@ public:
                 continue;
             }
             f->Assign(ptr);
+        }
+    }
+};
+
+class RvaApiResolver : public ApiResolver {
+    std::map<std::string, size_t> offMap;
+
+public:
+    RvaApiResolver(const std::map<std::string, size_t>& offMap = {}) {
+        this->offMap = offMap;
+    }
+
+    void Resolve(LibResolver& lf) override {
+        for (auto f : Api::Functions::_apiCalls) {
+            auto funcName = f->Name();
+            uintptr_t addr = lf.GetBaseAddress() + offMap.at(funcName);
+            f->Assign((void*) addr);
         }
     }
 };

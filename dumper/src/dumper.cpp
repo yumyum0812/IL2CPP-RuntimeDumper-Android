@@ -1029,7 +1029,7 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             if (va != UINTPTR_MAX && va != 0) {
                 va = NormalizePointer(va);
                 rva = va - libBase;
-                off = libRes.RVAToOffset(rva);
+                off = libRes.RvaToOffset(rva);
             }
         }
 
@@ -1083,6 +1083,8 @@ void RunDumper() {
     using namespace Api;
 
     Log::Debug("running...");
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     auto extDirS = GetAppExtDir();
     if (extDirS.empty()) {
