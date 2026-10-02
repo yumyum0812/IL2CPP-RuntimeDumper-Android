@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <ostream>
+#include <sstream>
 #include <unordered_map>
 
 #include "api/functions.h"
@@ -478,9 +480,9 @@ std::vector<Object*> ObjListToVector(Object* obj, const std::string& tName = "")
     return vec;
 }
 
-void FindReflectionMethod(Class* klass, const std::string& name, const std::string& rt, const std::vector<std::string>& params, Method** method) {
-    if(!(*method = FindMethod(typeC, name, rt, params)))
-        Log::Warn("method {}.{} not found", klass->GetName(), name);
+void FindReflectionMethod(Class* klass, const std::string& name, const std::string& rt, const std::vector<std::string>& params, Method** method, const std::string& debugSuffix = "") {
+    if(!(*method = FindMethod(klass, name, rt, params)))
+        Log::Warn("method {}.{}{} not found", klass->GetName(), name, debugSuffix);
 }
 
 void InitUnityReflection() {
@@ -490,13 +492,13 @@ void InitUnityReflection() {
         return;
     }
 
-    Class* c = image->FindClass("UnityEngine", "Application");
-    if (!c) {
+    Class* appC = image->FindClass("UnityEngine", "Application");
+    if (!appC) {
         Log::Warn("class Application not found");
         return;
     }
 
-    FindReflectionMethod(typeC,
+    FindReflectionMethod(appC,
         "get_unityVersion",
         "System.String",
         {},
@@ -536,11 +538,12 @@ void InitReflection(Image* corlib) {
             {"System.String"},
             &tGetField
         );
-        FindReflectionMethod(typeC,
+        FindReflectionMethod(
+            typeC,
             "GetProperty",
             "System.Reflection.PropertyInfo",
             {"System.String"},
-            &tGetField
+            &tGetProp
         );
     }
 
@@ -549,14 +552,14 @@ void InitReflection(Image* corlib) {
         Log::Warn("class MethodBase not found");
     } else {
         FindReflectionMethod(
-            typeC,
+            methodC,
             "GetGenericArguments",
-            "System.Reflection.PropertyInfo",
-            {"System.String"},
+            "System.Type[]",
+            {},
             &mGetGenericArgs
         );
         FindReflectionMethod(
-            typeC,
+            methodC,
             "GetParameters",
             "System.Reflection.ParameterInfo[]",
             {},
@@ -569,28 +572,28 @@ void InitReflection(Image* corlib) {
         Log::Warn("class ParameterInfo not found");
     } else {
         FindReflectionMethod(
-            typeC,
+            parC,
             "get_Attributes",
             "System.Reflection.ParameterAttributes",
             {},
             &paramM.getAttrs
         );
         FindReflectionMethod(
-            typeC,
+            parC,
             "get_DefaultValue",
             "System.Object",
             {},
             &paramM.getDefValue
         );
         FindReflectionMethod(
-            typeC,
+            parC,
             "get_Name",
             "System.String",
             {},
             &paramM.getName
         );
         FindReflectionMethod(
-            typeC,
+            parC,
             "get_ParameterType",
             "System.Type",
             {},
@@ -619,11 +622,13 @@ void InitReflectionAtt(Image* corlib) {
     if (!attC) {
         Log::Warn("class CustomAttributeData not found");
     } else {
-        FindReflectionMethod(attC,
+        FindReflectionMethod(
+            attC,
             "GetCustomAttributes",
             "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
             {"System.Reflection.MemberInfo"},
-            &attM.getAttrs
+            &attM.getAttrs,
+            "(M)"
         );
 
         FindReflectionMethod(
@@ -631,7 +636,8 @@ void InitReflectionAtt(Image* corlib) {
             "GetCustomAttributes",
             "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
             {"System.Reflection.ParameterInfo"},
-            &attM.getAttrsP
+            &attM.getAttrsP,
+            "(P)"
         );
 
         FindReflectionMethod(
@@ -936,7 +942,7 @@ std::string FormatObject(Object* obj) {
     return out;
 }
 
-void DoAttr(Object* attrs, std::ofstream& out, int ind, bool nl) {
+void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl) {
     auto attrsV = ObjListToVector(attrs, "System.Reflection.CustomAttributeData");
     for (Object* attr : attrsV) {
         if (!attr) continue;
@@ -1002,7 +1008,7 @@ void DoAttr(Object* attrs, std::ofstream& out, int ind, bool nl) {
     }
 }
 
-void DoMemberAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
+void DoMemberAttr(Object* memberInfo, std::ostream& out, int ind = 1) {
     if (!memberInfo) return;
 
     if (!attM.getAttrs ||
@@ -1017,7 +1023,7 @@ void DoMemberAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
     DoAttr(attrs, out, ind, true);
 }
 
-void DoParamAttr(Object* paramInfo, std::ofstream& out) {
+void DoParamAttr(Object* paramInfo, std::ostream& out) {
     if (!paramInfo) return;
 
     Object* attrs = attM.getAttrsP->Invoke(nullptr, paramInfo);
@@ -1189,8 +1195,9 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
                 int attrs = *(int*) attrsO->Unbox();
 
                 std::string s;
-
-                DoParamAttr(obj, out);
+                std::ostringstream atts;
+                DoParamAttr(obj, atts);
+                s += atts.str();
 
                 bool isIn = (attrs & ParameterAttributes::IN) != 0;
                 bool isOut = (attrs & ParameterAttributes::OUT) != 0;
