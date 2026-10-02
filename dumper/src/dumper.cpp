@@ -131,7 +131,7 @@ std::string JoinStr(const std::vector<std::string>& vars, const std::string& del
     return out;
 }
 
-void RemoveSuffix(std::string& str, std::string_view suff) {
+void EraseSuffix(std::string& str, std::string_view suff) {
     if (str.ends_with(suff))
         str.erase(str.size() - suff.size());
 }
@@ -198,7 +198,7 @@ Method* FindMethodP(Class* klass, const std::string& name, const std::string& rt
 
 Method* FindMethodI(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
     if (!klass) return nullptr;
-    
+
     auto m = FindMethod(klass, name, rtName, pNames);
     if (m) return m;
 
@@ -262,22 +262,25 @@ std::string FormatTypeName(Type* typ, bool def = false) {
     if (arrGetValue && tGetGenericArgs && (klass->IsGeneric() || klass->IsInflated())) {
         auto to = typ->GetObject();
         auto getGensV = to->GetVirtualMethod(tGetGenericArgs);
-        auto args = (Array*) getGensV->Invoke(to);
-        
-        std::string pureName = klass->GetName();
-        size_t pos = pureName.find('`');
-        pureName = (pos != std::string::npos) ? pureName.substr(0, pos) : pureName;
+        if (getGensV) {
+            auto args = (Array*) getGensV->Invoke(to);
+            if (args) {
+                std::string pureName = klass->GetName();
+                size_t pos = pureName.find('`');
+                pureName = (pos != std::string::npos) ? pureName.substr(0, pos) : pureName;
 
-        int len = args->GetLength();
-        std::vector<std::string> ps;
-        for (int i = 0; i < len; i++) {
-            auto p = arrGetValue->Invoke(args, i);
-            auto pt = Class::FromSystemType(p);
-            auto ptC = pt->GetType();
-            ps.push_back(FormatTypeName(ptC, def));
+                int len = args->GetLength();
+                std::vector<std::string> ps;
+                for (int i = 0; i < len; i++) {
+                    auto p = arrGetValue->Invoke(args, i);
+                    auto pt = Class::FromSystemType(p);
+                    auto ptC = pt->GetType();
+                    ps.push_back(FormatTypeName(ptC, def));
+                }
+                
+                return pureName + "<" + JoinStr(ps, ", ") + ">";
+            }
         }
-        
-        return pureName + "<" + JoinStr(ps, ", ") + ">";
     }
 
     return res + klass->GetName();
@@ -407,13 +410,13 @@ std::string FormatParamType(Type* typ) {
     return out;
 }
 
-std::vector<Object*> ObjListToVector(Object* obj) {
+std::vector<Object*> ObjListToVector(Object* obj, const std::string& tName = "") {
     auto klass = obj->GetClass();
 
     auto getCount = FindMethodI(klass, "get_Count", "System.Int32", {});
     if (!getCount) return {};
 
-    auto getItem = FindMethodI(klass, "get_Item", "T", {"System.Int32"});
+    auto getItem = FindMethodI(klass, "get_Item", tName, {"System.Int32"});
     if (!getItem) return {};
 
     getCount = obj->GetVirtualMethod(getCount);
@@ -827,7 +830,7 @@ void DoAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
     Object* attrs = attM.getAttrs->Invoke(nullptr, memberInfo);
     if (!attrs) return;
     
-    auto attrsV = ObjListToVector(attrs);
+    auto attrsV = ObjListToVector(attrs, "System.Reflection.CustomAttributeData");
     for (Object* attr : attrsV) {
         if (!attr) continue;
 
@@ -838,7 +841,7 @@ void DoAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
         if (!attC) continue;
         
         auto attTypeName = attC->GetName();
-        RemoveSuffix(attTypeName, "Attribute");
+        EraseSuffix(attTypeName, "Attribute");
 
         for (int i = 0; i < ind; i++) {
             out << INDENT;
@@ -852,8 +855,8 @@ void DoAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
         Object* nameds = attM.getNamedArgs->Invoke(attr);
         if (!nameds) continue;
 
-        auto constrsV = ObjListToVector(constrs);
-        auto namedsV = ObjListToVector(nameds);
+        auto constrsV = ObjListToVector(constrs, "System.Reflection.CustomAttributeTypedArgument");
+        auto namedsV = ObjListToVector(nameds, "System.Reflection.CustomAttributeNamedArgument");
 
         std::vector<std::string> argStrs;
         for (Object* typed : constrsV) {
@@ -944,8 +947,8 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             auto fName = f->GetName();
             auto fNameS = String::New(fName.c_str());
             auto gf = to->GetVirtualMethod(tGetField);
-            auto fo = gf->Invoke(to, fNameS);
-            if (fo) {
+            if (gf) {
+                auto fo = gf->Invoke(to, fNameS);
                 DoAttr(fo, out);
             }
         }
@@ -989,8 +992,8 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             auto pName = p->GetName();
             auto pNameS = String::New(pName.c_str());
             auto gf = to->GetVirtualMethod(tGetField);
-            auto po = gf->Invoke(to, pNameS);
-            if (po) {
+            if (gf) {
+                auto po = gf->Invoke(to, pNameS);
                 DoAttr(po, out);
             }
         }
@@ -1058,20 +1061,24 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         if ((isInflated || isGeneric) && arrGetValue && mGetGenericArgs) {
             auto to = m->GetObject();
             auto getGensV = to->GetVirtualMethod(mGetGenericArgs);
-            auto args = (Array*) getGensV->Invoke(to);
-            int len = args->GetLength();
+            if (getGensV) {
+                auto args = (Array*) getGensV->Invoke(to);
+                if (args) {
+                    int len = args->GetLength();
 
-            std::vector<std::string> pNames;
-            for (int i = 0; i < len; i++) {
-                auto p = arrGetValue->Invoke(args, i);
-                auto pt = Class::FromSystemType(p);
+                    std::vector<std::string> pNames;
+                    for (int i = 0; i < len; i++) {
+                        auto p = arrGetValue->Invoke(args, i);
+                        auto pt = Class::FromSystemType(p);
 
-                pNames.push_back(FormatTypeName(pt->GetType()));
+                        pNames.push_back(FormatTypeName(pt->GetType()));
+                    }
+                    
+                    out << "<";
+                    out << JoinStr(pNames, ", ");
+                    out << ">";
+                }
             }
-            
-            out << "<";
-            out << JoinStr(pNames, ", ");
-            out << ">";
         }
 
         out << "(";
