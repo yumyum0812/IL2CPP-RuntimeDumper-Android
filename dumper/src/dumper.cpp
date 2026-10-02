@@ -147,12 +147,14 @@ Image* FindImage(const std::string& name) {
     auto asms = domain->GetAssemblies();
     for (auto a : asms) {
         auto img = a->GetImage();
-        if (img->GetName() == name) return img;
+        if (img->GetName() == name)
+            return img;
     }
     return nullptr;
 }
 
 Method* FindMethod(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
+    if (!klass) return nullptr;
     auto methods = klass->GetMethods();
 
     for (auto m : methods) {
@@ -186,18 +188,19 @@ Method* FindMethodP(Class* klass, const std::string& name, const std::string& rt
     if (m) return m;
 
     auto par = klass->GetParent();
-    return FindMethod(par, name, rtName, pNames);
+    if (par && par != klass)
+        return FindMethodP(par, name, rtName, pNames);
+    return nullptr;
 }
 
 Method* FindMethodI(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
     auto m = FindMethod(klass, name, rtName, pNames);
+    if (m) return m;
 
     auto inters = klass->GetInterfaces();
     for (auto p : inters) {
-        if (p && p != klass) {
-            auto met = FindMethod(p, name, rtName, pNames);
-            if (met) return met;
-        }
+        if (!p || p == klass) continue;
+        return FindMethodI(p, name, rtName, pNames);
     }
     return nullptr;
 }
@@ -405,7 +408,7 @@ std::vector<Object*> ObjListToVector(Object* obj) {
     auto getCount = FindMethodI(klass, "get_Count", "System.Int32", {});
     if (!getCount) return {};
 
-    auto getItem = FindMethodI(klass, "get_Item", "", {"System.Int32"});
+    auto getItem = FindMethodI(klass, "get_Item", "T", {"System.Int32"});
     if (!getItem) return {};
 
     getCount = obj->GetVirtualMethod(getCount);
@@ -1083,7 +1086,6 @@ void RunDumper() {
     using namespace Api;
 
     Log::Debug("running...");
-
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     auto extDirS = GetAppExtDir();
@@ -1092,7 +1094,6 @@ void RunDumper() {
         return;
     }
     Log::Debug("obtained external files dir: {}", extDirS);
-
     std::filesystem::path extDir(extDirS);
 
     std::map<std::string, std::string> symMap;
@@ -1102,10 +1103,10 @@ void RunDumper() {
     if (std::filesystem::exists(mapFileP)) {
         Log::Debug("symbol_map.txt found");
 
-        std::ifstream file(mapFileP);
+        std::ifstream mapF(mapFileP);
 
         std::string line;
-        while (std::getline(file, line)) {
+        while (std::getline(mapF, line)) {
             auto pos = line.find(' ');
             if (pos == std::string::npos)
                 continue;
