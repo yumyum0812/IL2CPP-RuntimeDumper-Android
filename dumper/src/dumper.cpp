@@ -100,7 +100,7 @@ const std::unordered_map<char, std::string> charEscapes = {
 
 uintptr_t libBase = 0;
 size_t structBoxSize = 0;
-Class* typeKlass = nullptr;
+Class* typeC = nullptr;
 Method* arrGetValue = nullptr;
 Method* tGetGenericArgs = nullptr;
 Method* tGetField = nullptr;
@@ -438,45 +438,45 @@ std::vector<Object*> ObjListToVector(Object* obj) {
 }
 
 void InitReflection(Image* corlib) {
-    auto vtKlass = corlib->FindClass("System", "Object");
-    if (!vtKlass) {
+    auto objC = corlib->FindClass("System", "Object");
+    if (!objC) {
         Log::Warn("Object not found");
     } else {
-        structBoxSize = vtKlass->GetInstanceSize();
+        structBoxSize = objC->GetInstanceSize();
         Log::Debug("object box size: 0x{:X}", structBoxSize);
     }
 
-    typeKlass = corlib->FindClass("System", "Type");
-    if (!typeKlass) {
+    typeC = corlib->FindClass("System", "Type");
+    if (!typeC) {
         Log::Warn("class Type not found");
     } else {
-        tGetGenericArgs = FindMethod(typeKlass, "GetGenericArguments", "System.Type[]", {});
+        tGetGenericArgs = FindMethod(typeC, "GetGenericArguments", "System.Type[]", {});
         if (!tGetGenericArgs)
             Log::Warn("method Type.GetGenericArguments not found");
 
-        tGetField = FindMethod(typeKlass, "GetField", "System.Reflection.FieldInfo", {"System.String"});
+        tGetField = FindMethod(typeC, "GetField", "System.Reflection.FieldInfo", {"System.String"});
         if (!tGetField)
             Log::Warn("method Type.GetField not found");
 
-        tGetProp = FindMethod(typeKlass, "GetProperty", "System.Reflection.PropertyInfo", {"System.String"});
+        tGetProp = FindMethod(typeC, "GetProperty", "System.Reflection.PropertyInfo", {"System.String"});
         if (!tGetProp)
             Log::Warn("method Type.GetProperty not found");
     }
 
-    auto methodKlass = corlib->FindClass("System.Reflection", "MethodBase");
-    if (!methodKlass) {
+    auto methodC = corlib->FindClass("System.Reflection", "MethodBase");
+    if (!methodC) {
         Log::Warn("MethodBase not found");
     } else {
-        mGetGenericArgs = FindMethod(methodKlass, "GetGenericArguments", "System.Type[]", {});
+        mGetGenericArgs = FindMethod(methodC, "GetGenericArguments", "System.Type[]", {});
         if (!tGetGenericArgs)
             Log::Warn("method MethodBase.GetGenericArguments not found");
     }
 
-    auto arrKlass = corlib->FindClass("System", "Array");
-    if (!arrKlass) {
+    auto arrC = corlib->FindClass("System", "Array");
+    if (!arrC) {
         Log::Warn("System.Array not found");
     } else {
-        arrGetValue = FindMethod(arrKlass, "GetValue", "System.Object", {"System.Int32"});
+        arrGetValue = FindMethod(arrC, "GetValue", "System.Object", {"System.Int32"});
         if (!arrGetValue)
             Log::Warn("method Array.GetValue not found");
     }
@@ -794,7 +794,7 @@ std::string FormatObject(Object* obj) {
         case TypeEnum::R4: appendFloat.operator()<float>(); break;
         case TypeEnum::R8: appendFloat.operator()<double>(); break;
         case TypeEnum::CLASS: {
-            if (typeKlass && typeKlass->IsAssignableFrom(obj->GetClass())) {
+            if (typeC && typeC->IsAssignableFrom(obj->GetClass())) {
                 auto tName = Class::FromSystemType(obj)->GetType();
                 return "typeof(" + FormatTypeName(tName) + ")";
             }
