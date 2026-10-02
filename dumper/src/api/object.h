@@ -2,8 +2,10 @@
 
 #include "functions.h"
 
-namespace Dumper::Api {
+namespace Api {
     struct Object {
+        Object() = delete;
+        
         Class* GetClass() {
             return Functions::il2cpp_object_get_class(this);
         }

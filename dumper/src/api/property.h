@@ -3,8 +3,10 @@
 #include <string>
 #include "functions.h"
 
-namespace Dumper::Api {
+namespace Api {
     struct Property {
+        Property() = delete;
+        
         std::string GetName() {
             auto s = Functions::il2cpp_property_get_name(this);
             return {s ? s : ""};

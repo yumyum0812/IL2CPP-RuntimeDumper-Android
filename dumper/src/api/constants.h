@@ -1,4 +1,4 @@
-namespace Dumper::Api {
+namespace Api {
     namespace TypeEnum {
         constexpr int END        = 0x00;
         constexpr int VOID       = 0x01;

@@ -4,8 +4,10 @@
 #include <string>
 #include <vector>
 
-namespace Dumper::Api {
+namespace Api {
     struct Image {
+        Image() = delete;
+        
         static Image* GetCorlib() {
             return Functions::il2cpp_get_corlib();
         }
@@ -26,7 +28,7 @@ namespace Dumper::Api {
             ret.reserve(count);
             for (int i = 0; i < count; i++) {
                 Class* c = Functions::il2cpp_image_get_class(this, i);
-                ret.push_back(c);
+                if (c) ret.push_back(c);
             }
 
             return ret;

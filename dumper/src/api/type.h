@@ -3,9 +3,9 @@
 #include <string>
 #include "functions.h"
 
-namespace Dumper::Api {
+namespace Api {
     struct Type {
-        void* methodPtr;
+        Type() = delete;
 
         std::string GetName() {
             auto s = Functions::il2cpp_type_get_name(this);

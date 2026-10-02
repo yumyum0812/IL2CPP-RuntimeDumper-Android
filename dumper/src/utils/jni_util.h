@@ -1,8 +1,11 @@
+#pragma once
+
 #include <jni.h>
 #include <xdl.h>
 #include <string>
 
-namespace Dumper::JniUtil {
+
+namespace JniUtil {
     class JniAttach {
         JavaVM* vm = nullptr;
         JNIEnv* env = nullptr;
@@ -10,7 +13,7 @@ namespace Dumper::JniUtil {
 
     public:
         ~JniAttach() {
-                Detach();
+            Detach();
         }
         
         JniAttach(JavaVM* vm): vm(vm) {}

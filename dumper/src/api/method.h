@@ -2,11 +2,12 @@
 
 #include <string>
 #include "functions.h"
-#include <filesystem>
 
-namespace Dumper::Api {
+namespace Api {
     struct Method {
         void* methodPtr;
+
+        Method() = delete;
 
         std::string GetName() {
             auto s = Functions::il2cpp_method_get_name(this);
@@ -63,20 +64,7 @@ namespace Dumper::Api {
             }
 
             Object* exc = nullptr;
-            auto ret = Functions::il2cpp_runtime_invoke(this, obj, paramArray, &exc);
-            if (exc) {
-                auto k = Functions::il2cpp_object_get_class(exc);
-                auto aa = Functions::il2cpp_string_chars(*(String**)(uintptr_t(exc) + 0x18));
-                auto aaa = std::filesystem::path(aa).string();
-
-                Log::Debug("e: {}", Functions::il2cpp_class_get_name(k));
-                Log::Debug("  msg: {}", aaa);
-
-                Log::Debug("m: {}", this->GetName());
-                Log::Debug(" k: {}", Functions::il2cpp_class_get_name(this->GetClass()));
-                Log::Debug("obj: {}", Functions::il2cpp_class_get_name(Functions::il2cpp_object_get_class((Object*)obj)));
-            }
-            return ret;
+            return Functions::il2cpp_runtime_invoke(this, obj, paramArray, &exc);
         }
 
         template <typename T, typename... A>

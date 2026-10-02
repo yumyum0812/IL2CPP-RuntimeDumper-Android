@@ -4,8 +4,10 @@
 #include "functions.h"
 #include "type.h"
 
-namespace Dumper::Api {
+namespace Api {
     struct Field {
+        Field() = delete;
+        
         std::string GetName() {
             auto s = Functions::il2cpp_field_get_name(this);
             return {s ? s : ""};

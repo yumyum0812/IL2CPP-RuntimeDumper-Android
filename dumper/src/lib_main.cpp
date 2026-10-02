@@ -1,14 +1,14 @@
 #include <thread>
-#include "dumper/dumper.h"
+#include "dumper.h"
 
 
 void ThreadMain() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    auto dumper = Dumper::RuntimeDumper();
-    dumper.Run();
+    RunDumper();
 }
 
 __attribute__((constructor))
 void LibMain() {
-    std::thread(ThreadMain).detach();
+    auto t = std::thread(ThreadMain);
+    t.detach();
 }

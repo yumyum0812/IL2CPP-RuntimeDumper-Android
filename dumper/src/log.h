@@ -5,7 +5,7 @@
 #include <android/log.h>
 
 
-namespace Dumper::Log {
+namespace Log {
     constexpr auto TAG = "RuntimeDumper";
     
     template<typename... Args>

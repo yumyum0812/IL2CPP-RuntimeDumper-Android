@@ -1,8 +1,10 @@
 #pragma once
 #include "functions.h"
 
-namespace Dumper::Api {
+namespace Api {
     struct Domain {
+        Domain() = delete;
+        
         static Domain* GetInstance() {
             return Functions::il2cpp_domain_get();
         }
@@ -15,7 +17,8 @@ namespace Dumper::Api {
             vec.reserve(size);
             
             for (int i = 0; i < size; i++) {
-                vec.push_back(asms[i]);
+                auto v = asms[i];
+                if (v) vec.push_back(v);
             }
 
             return vec;

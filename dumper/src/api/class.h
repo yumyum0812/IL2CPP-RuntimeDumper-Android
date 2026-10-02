@@ -4,8 +4,10 @@
 #include <vector>
 #include "functions.h"
 
-namespace Dumper::Api {
+namespace Api {
     struct Class {
+        Class() = delete;
+
         std::string GetNamespace() {
             auto s = Functions::il2cpp_class_get_namespace(this);
             return {s ? s : ""};
@@ -20,8 +22,8 @@ namespace Dumper::Api {
             std::vector<Method*> vec;
 
             void* iter = nullptr;
-            while (auto met = Functions::il2cpp_class_get_methods(this, &iter)) {
-                vec.push_back(met);
+            while (auto v = Functions::il2cpp_class_get_methods(this, &iter)) {
+                if (v) vec.push_back(v);
             }
 
             return vec;
@@ -31,8 +33,8 @@ namespace Dumper::Api {
             std::vector<Field*> vec;
 
             void* iter = nullptr;
-            while (auto fld = Functions::il2cpp_class_get_fields(this, &iter)) {
-                vec.push_back(fld);
+            while (auto v = Functions::il2cpp_class_get_fields(this, &iter)) {
+                if (v) vec.push_back(v);
             }
 
             return vec;
@@ -42,8 +44,8 @@ namespace Dumper::Api {
             std::vector<Property*> vec;
 
             void* iter = nullptr;
-            while (auto prop = Functions::il2cpp_class_get_properties(this, &iter)) {
-                vec.push_back(prop);
+            while (auto v = Functions::il2cpp_class_get_properties(this, &iter)) {
+                if (v) vec.push_back(v);
             }
 
             return vec;
@@ -54,7 +56,7 @@ namespace Dumper::Api {
 
             void* iter = nullptr;
             while (auto v = Functions::il2cpp_class_get_interfaces(this, &iter)) {
-                vec.push_back(v);
+                if (v) vec.push_back(v);
             }
 
             return vec;

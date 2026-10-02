@@ -2,8 +2,10 @@
 #include "functions.h"
 #include <string>
 
-namespace Dumper::Api {
+namespace Api {
     struct String {
+        String() = delete;
+        
         static String* New(const char* cstr) {
             return Functions::il2cpp_string_new(cstr);
         }

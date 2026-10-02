@@ -4,8 +4,10 @@
 #include "domain.h"
 
 
-namespace Dumper::Api {
+namespace Api {
     struct Thread {
+        Thread() = delete;
+        
         static Thread* Attach(Domain* domain) {
             return Functions::il2cpp_thread_attach(domain);
         }
