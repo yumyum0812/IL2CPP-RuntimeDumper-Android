@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <unordered_map>
 
 #include "api/functions.h"
@@ -25,6 +26,7 @@
 #include "log.h"
 
 using namespace Api;
+namespace fs = std::filesystem;
 
 
 constexpr auto INDENT = "    ";
@@ -100,15 +102,17 @@ const std::unordered_map<char, std::string> charEscapes = {
 
 uintptr_t libBase = 0;
 size_t structBoxSize = 0;
+Method* getUnityVer = nullptr;
 Class* typeC = nullptr;
 Method* arrGetValue = nullptr;
 Method* tGetGenericArgs = nullptr;
 Method* tGetField = nullptr;
 Method* tGetProp = nullptr;
 Method* mGetGenericArgs = nullptr;
-Method* getUnityVer = nullptr;
+Method* mGetParams = nullptr;
 struct {
     Method* getAttrs = nullptr;
+    Method* getAttrsP = nullptr;
     Method* getAttType = nullptr;
     Method* getConstructorArgs = nullptr;
     Method* getNamedArgs = nullptr;
@@ -120,6 +124,12 @@ struct {
     Method* getName = nullptr;
     Method* getTypedValue = nullptr;
 } attNamedArgM;
+struct {
+    Method* getAttrs = nullptr;
+    Method* getName = nullptr;
+    Method* getType = nullptr;
+    Method* getDefValue = nullptr;
+} paramM;
 
 
 std::string JoinStr(const std::vector<std::string>& vars, const std::string& delim) {
@@ -131,13 +141,26 @@ std::string JoinStr(const std::vector<std::string>& vars, const std::string& del
     return out;
 }
 
+std::string RepeatStr(const std::string& str, int n) {
+    std::string out;
+    for (int i = 0; i < n; i++) {
+        out += str;
+    }
+    return out;
+}
+
 void EraseSuffix(std::string& str, std::string_view suff) {
     if (str.ends_with(suff))
         str.erase(str.size() - suff.size());
 }
 
+std::string SubstrBefore(const std::string& str, const std::string& delim) {
+    size_t pos = str.find(delim);
+    return (pos != std::string::npos) ? str.substr(0, pos) : str;
+}
+
 std::string U16ToU8(const std::u16string& u16str) {
-    std::u8string u8str = std::filesystem::path(u16str).u8string();
+    std::u8string u8str = fs::path(u16str).u8string();
     std::string utf8str(reinterpret_cast<const char*>(u8str.data()), u8str.length());
     return utf8str;
 }
@@ -239,43 +262,51 @@ std::string GetAppExtDir() {
     return extDir;
 }
 
-std::string FormatTypeName(Type* typ, bool def = false) {
-    auto klass = Class::FromType(typ);
-    auto tp = typ->GetTypeEnum();
+std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof = false) {
+    if(!t) return "?";
+
+    auto klass = Class::FromType(t);
+    auto tp = t->GetTypeEnum();
 
     std::string res;
 
-    auto dt = klass->GetDeclaringClass();
-    if (dt)
-        res += FormatTypeName(dt->GetType(), def) + ".";
+    auto outer = klass->GetDeclaringClass();
+    if (outer)
+        res += FormatTypeName(outer->GetType(), forDefinition) + ".";
     
     if (typeSuffixes.contains(tp)) {
         auto ec = klass->GetElementClass();
         if (ec && ec != klass)
-            return res + FormatTypeName(ec->GetType(), def) + typeSuffixes.at(tp);
+            return res + FormatTypeName(ec->GetType(), forDefinition) + typeSuffixes.at(tp);
     }
     
-    if (!def && typeAliases.contains(tp)) {
+    if (!forDefinition && typeAliases.contains(tp)) {
         return typeAliases.at(tp);
     }
 
-    if (arrGetValue && tGetGenericArgs && (klass->IsGeneric() || klass->IsInflated())) {
-        auto to = typ->GetObject();
+    auto name = klass->GetName();
+    auto isGeneric = klass->IsGeneric();
+    auto isInflated = klass->IsInflated();
+
+    if (arrGetValue && tGetGenericArgs && (isGeneric || isInflated)) {
+        auto to = t->GetObject();
         auto getGensV = to->GetVirtualMethod(tGetGenericArgs);
         if (getGensV) {
             auto args = (Array*) getGensV->Invoke(to);
             if (args) {
-                std::string pureName = klass->GetName();
-                size_t pos = pureName.find('`');
-                pureName = (pos != std::string::npos) ? pureName.substr(0, pos) : pureName;
+                std::string pureName = SubstrBefore(name, "`");
 
                 int len = args->GetLength();
+
+                if (!isInflated && forTypeof)
+                    return SubstrBefore(name, "`") + "<" + RepeatStr(",", len - 1) +  ">";
+
                 std::vector<std::string> ps;
                 for (int i = 0; i < len; i++) {
                     auto p = arrGetValue->Invoke(args, i);
                     auto pt = Class::FromSystemType(p);
                     auto ptC = pt->GetType();
-                    ps.push_back(FormatTypeName(ptC, def));
+                    ps.push_back(FormatTypeName(ptC, forDefinition));
                 }
                 
                 return pureName + "<" + JoinStr(ps, ", ") + ">";
@@ -283,7 +314,7 @@ std::string FormatTypeName(Type* typ, bool def = false) {
         }
     }
 
-    return res + klass->GetName();
+    return res + name;
 }
 
 std::string FormatTypeType(Class* klass) {
@@ -479,8 +510,33 @@ void InitReflection(Image* corlib) {
         Log::Warn("MethodBase not found");
     } else {
         mGetGenericArgs = FindMethod(methodC, "GetGenericArguments", "System.Type[]", {});
-        if (!tGetGenericArgs)
+        if (!mGetGenericArgs)
             Log::Warn("method MethodBase.GetGenericArguments not found");
+
+        mGetParams = FindMethod(methodC, "GetParameters", "System.Reflection.ParameterInfo[]", {});
+        if (!mGetParams)
+            Log::Warn("method MethodBase.GetParameters not found");
+    }
+
+    auto parC = corlib->FindClass("System.Reflection", "ParameterInfo");
+    if (!parC) {
+        Log::Warn("ParameterInfo not found");
+    } else {
+        paramM.getAttrs = FindMethod(parC, "get_Attributes", "System.Reflection.ParameterAttributes", {});
+        if (!paramM.getAttrs)
+            Log::Warn("method ParameterInfo.get_Attributes not found");
+
+        paramM.getDefValue = FindMethod(parC, "get_DefaultValue", "System.Object", {});
+        if (!paramM.getDefValue)
+            Log::Warn("method ParameterInfo.get_DefaultValue not found");
+
+        paramM.getName = FindMethod(parC, "get_Name", "System.String", {});
+        if (!paramM.getName)
+            Log::Warn("method ParameterInfo.get_Name not found");
+
+        paramM.getType = FindMethod(parC, "get_ParameterType", "System.Type", {});
+        if (!paramM.getType)
+            Log::Warn("method ParameterInfo.get_Type not found");
     }
 
     auto arrC = corlib->FindClass("System", "Array");
@@ -521,6 +577,15 @@ void InitReflectionAtt(Image* corlib) {
         );
         if (!attM.getAttrs)
             Log::Warn("method CustomAttributeData.GetCustomAttributes not found");
+
+        attM.getAttrsP = FindMethod(
+            attC,
+            "GetCustomAttributes",
+            "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
+            {"System.Reflection.ParameterInfo"}
+        );
+        if (!attM.getAttrsP)
+            Log::Warn("method CustomAttributeData.GetCustomAttributes(P) not found");
         
         attM.getAttType = FindMethod(
             attC,
@@ -753,6 +818,10 @@ std::string FormatObject(Object* obj) {
     auto klass = obj->GetClass();
     auto type = klass->GetType();
 
+    if (klass->IsEnum()) {
+        type = klass->GetEnumBaseType();
+    }
+
     std::string out;
 
     auto appendInteger = [&]<std::integral T>() {
@@ -767,7 +836,7 @@ std::string FormatObject(Object* obj) {
 
     switch (type->GetTypeEnum()) {
         case TypeEnum::CHAR: {
-            uint16_t v = *(uint16_t*) obj->Unbox();;
+            uint16_t v = *(uint16_t*) obj->Unbox();
             
             out += "'";
             if (std::iscntrl(v))
@@ -781,7 +850,7 @@ std::string FormatObject(Object* obj) {
         } break;
 
         case TypeEnum::BOOLEAN: {
-            bool value = *(bool*) obj->Unbox();;
+            bool value = *(bool*) obj->Unbox();
             out += value ? "true" : "false";
         } break;
 
@@ -807,7 +876,7 @@ std::string FormatObject(Object* obj) {
         case TypeEnum::CLASS: {
             if (typeC && typeC->IsAssignableFrom(obj->GetClass())) {
                 auto tName = Class::FromSystemType(obj)->GetType();
-                return "typeof(" + FormatTypeName(tName) + ")";
+                return "typeof(" + FormatTypeName(tName, false, true) + ")";
             }
         } break;
     }
@@ -818,18 +887,7 @@ std::string FormatObject(Object* obj) {
     return out;
 }
 
-void DoAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
-    if (!memberInfo) return;
-
-    if (!attM.getAttrs ||
-        !attM.getAttType || !attM.getConstructorArgs || !attM.getNamedArgs ||
-        !attTypedArgM.getValue || !attNamedArgM.getTypedValue ||
-        !attNamedArgM.getName
-    ) return;
-
-    Object* attrs = attM.getAttrs->Invoke(nullptr, memberInfo);
-    if (!attrs) return;
-    
+void DoAttr(Object* attrs, std::ofstream& out, int ind, bool nl) {
     auto attrsV = ObjListToVector(attrs, "System.Reflection.CustomAttributeData");
     for (Object* attr : attrsV) {
         if (!attr) continue;
@@ -893,8 +951,32 @@ void DoAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
             out << ")";
         }
         out << "]";
-        out << "\n";
+        out << (nl ? "\n" : " ");
     }
+}
+
+void DoMemberAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
+    if (!memberInfo) return;
+
+    if (!attM.getAttrs ||
+        !attM.getAttType || !attM.getConstructorArgs || !attM.getNamedArgs ||
+        !attTypedArgM.getValue || !attNamedArgM.getTypedValue ||
+        !attNamedArgM.getName
+    ) return;
+
+    Object* attrs = attM.getAttrs->Invoke(nullptr, memberInfo);
+    if (!attrs) return;
+    
+    DoAttr(attrs, out, ind, true);
+}
+
+void DoParamAttr(Object* paramInfo, std::ofstream& out) {
+    if (!paramInfo) return;
+
+    Object* attrs = attM.getAttrsP->Invoke(nullptr, paramInfo);
+    if (!attrs) return;
+
+    DoAttr(attrs, out, 0, false);
 }
 
 void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
@@ -930,13 +1012,13 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         extNames.push_back(FormatTypeName(ifaces[i]->GetType()));
     }
 
+    Object* to = type->GetObject();
+    DoMemberAttr(to, out, 0);
+
     std::string ext;
     if (!extNames.empty()) {
         ext = " : " + JoinStr(extNames, ", ");
     }
-
-    Object* to = type->GetObject();
-    DoAttr(to, out, 0);
 
     out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + " {" + FormatClassSpecial(klass);
     out << "\n";
@@ -949,7 +1031,7 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             auto gf = to->GetVirtualMethod(tGetField);
             if (gf) {
                 auto fo = gf->Invoke(to, fNameS);
-                DoAttr(fo, out);
+                DoMemberAttr(fo, out);
             }
         }
 
@@ -984,17 +1066,19 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     }
 
     auto props = klass->GetProperties();
+    
     if (!fields.empty() && !props.empty())
         out << "\n";
     
     for (auto p : props) {
+        auto pName = p->GetName();
+
         if (tGetField) {
-            auto pName = p->GetName();
             auto pNameS = String::New(pName.c_str());
             auto gf = to->GetVirtualMethod(tGetField);
             if (gf) {
                 auto po = gf->Invoke(to, pNameS);
-                DoAttr(po, out);
+                DoMemberAttr(po, out);
             }
         }
 
@@ -1005,16 +1089,17 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         if (!fEith) continue;
 
         out << INDENT;
-        out << FormatMethodAccessor(fEith) + FormatTypeName(fEith->GetReturnType()) + " " + p->GetName();
+        out << FormatMethodAccessor(fEith) + FormatTypeName(fEith->GetReturnType()) + " " + pName;
         out << " { ";
         if (fGet) out << "get; ";
         if (fSet) out << "set; ";
         out << "}";
         out << "\n";
     }
-
+    
     auto methods = klass->GetMethods();
     for (auto m : methods) {
+        auto mo = m->GetObject();
         auto mName = m->GetName();
         auto rt = m->GetReturnType();
         bool isGeneric = m->IsGeneric();
@@ -1023,12 +1108,72 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
 
         std::vector<std::string> parFmts;
 
-        auto count = m->GetParamCount();
-        for (int i = 0; i < count; i++) {
-            auto pt = m->GetParam(i);
-            auto pn = m->GetParamName(i);
+        if (mGetParams && paramM.getDefValue && paramM.getName && paramM.getType && paramM.getAttrs) [&]{
+            auto vGetParams = mo->GetVirtualMethod(mGetParams);
+            if (!vGetParams) return;
 
-            parFmts.push_back(FormatParamType(pt) + FormatTypeName(pt) + " " + pn);
+            auto arr = (Array*) vGetParams->Invoke(mo);
+            if (!arr) return;
+
+            int len = arr->GetLength();
+            for (int i = 0; i < len; i++) {
+                auto obj = arrGetValue->Invoke(arr, i);
+                if (!obj) continue;
+
+                auto vGetName = obj->GetVirtualMethod(paramM.getName);
+                auto vGetType = obj->GetVirtualMethod(paramM.getType);
+                auto vGetDefV = obj->GetVirtualMethod(paramM.getDefValue);
+                auto vGetAttrs = obj->GetVirtualMethod(paramM.getAttrs);
+                if (!vGetName) continue;
+                if (!vGetType) continue;
+                if (!vGetDefV) continue;
+                if (!vGetAttrs) continue;
+
+                auto typeO = vGetType->Invoke(obj);
+                if (!typeO) continue;
+                
+                auto kls = Class::FromSystemType(typeO);
+                if (!kls) continue;
+
+                auto nameO = (String*) vGetName->Invoke(obj);
+                auto name = nameO ? U16ToU8(nameO->GetChars()) : "?";
+
+                auto attrsO = vGetAttrs->Invoke(obj);
+                int attrs = *(int*) attrsO->Unbox();
+
+                std::string s;
+
+                DoParamAttr(obj, out);
+
+                bool isIn = (attrs & ParameterAttributes::IN) != 0;
+                bool isOut = (attrs & ParameterAttributes::OUT) != 0;
+                if (isIn && isOut) {
+                    s += "ref ";
+                } else if (isIn) {
+                    s += "in ";
+                } else if (isOut) {
+                    s += "out ";
+                }
+
+                s += FormatTypeName(kls->GetType());
+                s += " ";
+                s += name;
+
+                if (attrs & ParameterAttributes::HAS_DEFAULT) {
+                    auto defO = vGetDefV->Invoke(obj);
+                    s += " = " + FormatObject(defO);
+                }
+
+                parFmts.push_back(s);
+            }
+        }(); else {
+            auto count = m->GetParamCount();
+            for (int i = 0; i < count; i++) {
+                auto pt = m->GetParam(i);
+                auto pn = m->GetParamName(i);
+
+                parFmts.push_back(FormatParamType(pt) + FormatTypeName(pt) + " " + pn);
+            }
         }
 
         intptr_t va = -1;
@@ -1050,7 +1195,7 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         out << std::format("// RVA: {} Offset: {} VA: {}", FormatOffset(rva), FormatOffset(off), FormatOffset(rva));
         out << "\n";
 
-        DoAttr(m->GetObject(), out);
+        DoMemberAttr(mo, out);
 
         out << INDENT;
         out << FormatMethodAccessor(m);
@@ -1092,6 +1237,81 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     out << "}";
     out << "\n";
     out << "\n";
+
+    out.flush();
+}
+
+std::unique_ptr<ApiResolver> GetApiResolver(const fs::path& extDir) {
+    auto mapFileP = extDir / "symbol_map.txt";
+    auto rvaFileP = extDir / "rva_map.txt";
+
+    if (fs::exists(mapFileP)) {
+        std::map<std::string, std::string> symMap;
+        Log::Debug("symbol_map.txt found");
+
+        std::ifstream mapF(mapFileP);
+
+        std::string line;
+        while (std::getline(mapF, line)) {
+            std::istringstream ss(line);
+
+            std::string key;
+            std::string value;
+            ss >> key >> value;
+
+            if (key.empty()) {
+                Log::Debug("key is empty");
+                continue;
+            }
+            if (value.empty()) {
+                Log::Debug("value is empty");
+                continue;
+            }
+
+            symMap[key] = value;
+        }
+
+        Log::Debug("loaded {:d} keys", symMap.size());
+        return std::make_unique<SymApiResolver>(symMap);
+    }
+
+    if (fs::exists(rvaFileP)) {
+        std::map<std::string, size_t> offMap;
+        Log::Debug("rva_map.txt found");
+
+        std::ifstream mapF(rvaFileP);
+
+        std::string line;
+        while (std::getline(mapF, line)) {
+            std::istringstream ss(line);
+
+            std::string key;
+            std::string value;
+            ss >> key >> value;
+
+            if (key.empty()) {
+                Log::Debug("key is empty");
+                continue;
+            }
+            if (value.empty()) {
+                Log::Debug("value is empty");
+                continue;
+            }
+
+            try {
+                auto offset = static_cast<size_t>(std::stoull(value, nullptr, 16));
+                offMap[key] = offset;
+            } catch (const std::exception& e) {
+                Log::Debug("invalid offset for {}: {}", key, value);
+                return nullptr;
+            }
+        }
+
+        Log::Debug("loaded {:d} keys", offMap.size());
+        return std::make_unique<RvaApiResolver>(offMap);
+    }
+
+    return std::make_unique<SymApiResolver>();
 }
 
 void RunDumper() {
@@ -1106,36 +1326,17 @@ void RunDumper() {
         return;
     }
     Log::Debug("obtained external files dir: {}", extDirS);
-    std::filesystem::path extDir(extDirS);
-
-    std::map<std::string, std::string> symMap;
-
-    auto mapFileP = extDir / "symbol_map.txt";
-
-    if (std::filesystem::exists(mapFileP)) {
-        Log::Debug("symbol_map.txt found");
-
-        std::ifstream mapF(mapFileP);
-
-        std::string line;
-        while (std::getline(mapF, line)) {
-            auto pos = line.find(' ');
-            if (pos == std::string::npos)
-                continue;
-
-            auto key   = line.substr(0, pos);
-            auto value = line.substr(pos + 1);
-
-            symMap[key] = value;
-        }
-
-        Log::Debug("loaded {:d} keys", symMap.size());
-    }
+    fs::path extDir(extDirS);
 
     auto libRes = LibResolver();
-    auto res = SymApiResolver(symMap);
+    auto res = GetApiResolver(extDir);
 
-    bool init = InitApi(libRes, res);
+    if (!res) {
+        Log::Error("cannot create api resolver");
+        return;
+    }
+
+    bool init = InitApi(libRes, *res);
     if (!init) {
         Log::Error("initialization failed");
         return;
@@ -1179,13 +1380,13 @@ void RunDumper() {
     auto asms = dmn->GetAssemblies();
     Log::Debug("assemblies: {:d}", asms.size());
 
-    std::filesystem::path dir = std::filesystem::path(extDirS) / "runtime-dumper";
-    if (std::filesystem::exists(dir)) {
-        std::filesystem::remove_all(dir);
+    fs::path dir = fs::path(extDirS) / "runtime-dumper";
+    if (fs::exists(dir)) {
+        fs::remove_all(dir);
         Log::Debug("cleaned dir");
     }
     
-    if (!std::filesystem::create_directories(dir)) {
+    if (!fs::create_directories(dir)) {
         Log::Debug("cannot create dir, {}", dir.c_str());
         return;
     }

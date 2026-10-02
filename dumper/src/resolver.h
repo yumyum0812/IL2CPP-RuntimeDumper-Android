@@ -76,7 +76,8 @@ public:
 class ApiResolver {
 public:
     ApiResolver() = default;
-    virtual void Resolve(LibResolver& lf) = 0;
+    virtual ~ApiResolver() = default;
+    virtual void Resolve(LibResolver& lf, const std::vector<Api::Functions::IApiCall*>& calls) = 0;
 };
 
 
@@ -88,8 +89,8 @@ public:
         this->symbolMap = symbolMap;
     }
 
-    void Resolve(LibResolver& lf) override {
-        for (auto f : Api::Functions::_apiCalls) {
+    void Resolve(LibResolver& lf, const std::vector<Api::Functions::IApiCall*>& calls) override {
+        for (auto f : calls) {
             auto funcName = f->Name();
 
             auto symName = funcName;
@@ -114,9 +115,13 @@ public:
         this->offMap = offMap;
     }
 
-    void Resolve(LibResolver& lf) override {
-        for (auto f : Api::Functions::_apiCalls) {
+    void Resolve(LibResolver& lf, const std::vector<Api::Functions::IApiCall*>& calls) override {
+        for (auto f : calls) {
             auto funcName = f->Name();
+            if (!offMap.contains(funcName)) {
+                Log::Debug("apiresolver: offset not found for {}", funcName);
+                continue;
+            }
             uintptr_t addr = lf.GetBaseAddress() + offMap.at(funcName);
             f->Assign((void*) addr);
         }
@@ -129,23 +134,8 @@ bool InitApi(LibResolver& libRes, ApiResolver& res) {
     libRes.Resolve();
     
     Log::Debug("init: resolving api...");
-    res.Resolve(libRes);
-
-    // auto domain = ((void*(*)())(libRes.GetBaseAddress() + 0x1D75660))();
-    // Log::Debug("domain: {:X}", uintptr_t(domain));
-
-    // auto thread = ((void*(*)(void*))(libRes.GetBaseAddress() + 0x1D79D00))(domain);
-    // Log::Debug("thread: {:X}", uintptr_t(thread));
+    res.Resolve(libRes, Api::Functions::_apiCalls);
     
-    // auto img = ((void*(*)())(libRes.GetBaseAddress() + 0x1d725a0))();
-    // Log::Debug("image: {:X}", uintptr_t(img));
-
-    // auto nm = ((const char*(*)(void*))(libRes.GetBaseAddress() + 0x1d7b0f4))(img);
-    // Log::Debug("image name: {}", nm);
-
-    // ((void*(*)(void*))(libRes.GetBaseAddress() + 0x1D79DB8))(thread);
-    // Log::Debug("detach ok");
-
     bool ok = true;
     for (auto f : Api::Functions::_apiCalls) {
         if (!f->Valid()) {

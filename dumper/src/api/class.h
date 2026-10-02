@@ -3,9 +3,24 @@
 #include <string>
 #include <vector>
 #include "functions.h"
+// #include "../log.h"
 
 namespace Api {
     struct Class {
+    private:
+        template <typename T, typename Fn>
+        std::vector<T*> DoIterator(const Fn& f) {
+            std::vector<T*> vec;
+
+            void* iter = nullptr;
+            while (T* v = f(this, &iter)) {
+                if (v) vec.push_back(v);
+            }
+
+            return vec;
+        }
+
+    public:
         Class() = delete;
 
         std::string GetNamespace() {
@@ -19,47 +34,19 @@ namespace Api {
         }
 
         std::vector<Method*> GetMethods() {
-            std::vector<Method*> vec;
-
-            void* iter = nullptr;
-            while (auto v = Functions::il2cpp_class_get_methods(this, &iter)) {
-                if (v) vec.push_back(v);
-            }
-
-            return vec;
+            return DoIterator<Method>(Functions::il2cpp_class_get_methods);
         }
 
         std::vector<Field*> GetFields() {
-            std::vector<Field*> vec;
-
-            void* iter = nullptr;
-            while (auto v = Functions::il2cpp_class_get_fields(this, &iter)) {
-                if (v) vec.push_back(v);
-            }
-
-            return vec;
+            return DoIterator<Field>(Functions::il2cpp_class_get_fields);
         }
 
         std::vector<Property*> GetProperties() {
-            std::vector<Property*> vec;
-
-            void* iter = nullptr;
-            while (auto v = Functions::il2cpp_class_get_properties(this, &iter)) {
-                if (v) vec.push_back(v);
-            }
-
-            return vec;
+            return DoIterator<Property>(Functions::il2cpp_class_get_properties);
         }
 
         std::vector<Class*> GetInterfaces() {
-            std::vector<Class*> vec;
-
-            void* iter = nullptr;
-            while (auto v = Functions::il2cpp_class_get_interfaces(this, &iter)) {
-                if (v) vec.push_back(v);
-            }
-
-            return vec;
+            return DoIterator<Class>(Functions::il2cpp_class_get_interfaces);
         }
 
         Class* GetParent() {
