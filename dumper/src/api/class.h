@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 #include "functions.h"
-// #include "../log.h"
 
 namespace Api {
     struct Class {

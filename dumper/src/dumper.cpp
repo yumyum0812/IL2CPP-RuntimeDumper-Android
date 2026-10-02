@@ -114,7 +114,7 @@ struct {
     Method* getAttrs = nullptr;
     Method* getAttrsP = nullptr;
     Method* getAttType = nullptr;
-    Method* getConstructorArgs = nullptr;
+    Method* getCtorArgs = nullptr;
     Method* getNamedArgs = nullptr;
 } attM;
 struct {
@@ -160,9 +160,8 @@ std::string SubstrBefore(const std::string& str, const std::string& delim) {
 }
 
 std::string U16ToU8(const std::u16string& u16str) {
-    std::u8string u8str = fs::path(u16str).u8string();
-    std::string utf8str(reinterpret_cast<const char*>(u8str.data()), u8str.length());
-    return utf8str;
+    std::u8string u8str = std::filesystem::path(u16str).u8string();
+    return std::string(u8str.begin(), u8str.end());
 }
 
 Image* FindImage(const std::string& name) {
@@ -195,7 +194,7 @@ Method* FindMethod(Class* klass, const std::string& name, const std::string& rtN
         bool ok = true;
         for (int i = 0; i < pc; i++) {
             auto c = m->GetParam(i);
-            if (c->GetName() != pNames[i]) {
+            if (!c || c->GetName() != pNames[i]) {
                 ok = false;
                 break;
             }
@@ -596,13 +595,13 @@ void InitReflectionAtt(Image* corlib) {
         if (!attM.getAttType)
             Log::Warn("method CustomAttributeData.get_AttributeType not found");
 
-        attM.getConstructorArgs = FindMethod(
+        attM.getCtorArgs = FindMethod(
             attC,
             "get_ConstructorArguments",
             "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>",
             {}
         );
-        if (!attM.getConstructorArgs)
+        if (!attM.getCtorArgs)
             Log::Warn("method CustomAttributeData.get_ConstructorArguments not found");
 
         attM.getNamedArgs = FindMethod(
@@ -901,13 +900,11 @@ void DoAttr(Object* attrs, std::ofstream& out, int ind, bool nl) {
         auto attTypeName = attC->GetName();
         EraseSuffix(attTypeName, "Attribute");
 
-        for (int i = 0; i < ind; i++) {
-            out << INDENT;
-        }
+        out << RepeatStr(INDENT, ind);
         out << "[";
         out << attTypeName;
 
-        Object* constrs = attM.getConstructorArgs->Invoke(attr);
+        Object* constrs = attM.getCtorArgs->Invoke(attr);
         if (!constrs) continue;
 
         Object* nameds = attM.getNamedArgs->Invoke(attr);
@@ -959,7 +956,7 @@ void DoMemberAttr(Object* memberInfo, std::ofstream& out, int ind = 1) {
     if (!memberInfo) return;
 
     if (!attM.getAttrs ||
-        !attM.getAttType || !attM.getConstructorArgs || !attM.getNamedArgs ||
+        !attM.getAttType || !attM.getCtorArgs || !attM.getNamedArgs ||
         !attTypedArgM.getValue || !attNamedArgM.getTypedValue ||
         !attNamedArgM.getName
     ) return;
