@@ -155,6 +155,7 @@ Image* FindImage(const std::string& name) {
 
 Method* FindMethod(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
     if (!klass) return nullptr;
+
     auto methods = klass->GetMethods();
 
     for (auto m : methods) {
@@ -184,6 +185,8 @@ Method* FindMethod(Class* klass, const std::string& name, const std::string& rtN
 }
 
 Method* FindMethodP(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
+    if (!klass) return nullptr;
+
     auto m = FindMethod(klass, name, rtName, pNames);
     if (m) return m;
 
@@ -194,6 +197,8 @@ Method* FindMethodP(Class* klass, const std::string& name, const std::string& rt
 }
 
 Method* FindMethodI(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
+    if (!klass) return nullptr;
+    
     auto m = FindMethod(klass, name, rtName, pNames);
     if (m) return m;
 
