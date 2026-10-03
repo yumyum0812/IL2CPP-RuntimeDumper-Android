@@ -660,6 +660,8 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     std::vector<std::string> extNames;
 
     auto type = klass->GetType();
+    if (!type) return;
+
     bool isValueType = klass->IsValueType();
     bool isEnum = klass->IsEnum();
 
@@ -685,8 +687,9 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         extNames.push_back(FormatTypeName(ifaces[i]->GetType()));
     }
 
-    Object* to = type->GetObject();
-    DoMemberForAttr(to, out, 0);
+    Object* tO = type->GetObject();
+    if (!tO) return;
+    DoMemberForAttr(tO, out, 0);
 
     std::string ext;
     if (!extNames.empty()) {
@@ -701,10 +704,10 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         if (refl.Type.GetField) [&]{
             auto fName = f->GetName();
             auto fNameS = String::New(fName.c_str());
-            auto vGetField = to->GetVirtualMethod(refl.Type.GetField);
+            auto vGetField = tO->GetVirtualMethod(refl.Type.GetField);
             if (!vGetField) return;
 
-            auto fO = vGetField->Invoke(to, fNameS);
+            auto fO = vGetField->Invoke(tO, fNameS);
             DoMemberForAttr(fO, out);
         }();
 
@@ -747,10 +750,10 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
 
         if (refl.Type.GetField) [&]{
             auto pNameO = String::New(pName.c_str());
-            auto vGetProperty = to->GetVirtualMethod(refl.Type.GetProperty);
+            auto vGetProperty = tO->GetVirtualMethod(refl.Type.GetProperty);
             if (!vGetProperty) return;
 
-            auto pO = vGetProperty->Invoke(to, pNameO);
+            auto pO = vGetProperty->Invoke(tO, pNameO);
             DoMemberForAttr(pO, out);
         }();
 
@@ -901,10 +904,10 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             auto to = m->GetObject();
             if (!to) return;
 
-            auto getGensV = to->GetVirtualMethod(refl.MethodBase.GetGenericArguments);
-            if (!getGensV) return;
+            auto vGetGenArgs = to->GetVirtualMethod(refl.MethodBase.GetGenericArguments);
+            if (!vGetGenArgs) return;
 
-            auto args = (Array*) getGensV->Invoke(to);
+            auto args = (Array*) vGetGenArgs->Invoke(to);
             if (!args) return;
 
             int len = args->GetLength();
