@@ -246,6 +246,8 @@ std::string FormatTypeAccessor(Class* klass) {
         {NESTED_FAM_OR_ASSEM,  "protected internal"},
     };
 
+    std::string outl;
+
     int acc = flags & VISIBILITY_MASK;
     if (accessMap.contains(acc)) {
         return accessMap.at(acc) + " ";
@@ -271,10 +273,11 @@ std::string FormatMethodAccessor(Method* met) {
     };
 
     bool isReuse    = (flags & VTABLE_LAYOUT_MASK) == REUSE_SLOT;
-    bool isStatic   = (flags & STATIC)   != 0;
-    bool isAbstract = (flags & ABSTRACT) != 0;
-    bool isVirtual  = (flags & VIRTUAL)  != 0;
-    bool isFinal    = (flags & FINAL)    != 0;
+    bool isStatic   = (flags & STATIC)       != 0;
+    bool isAbstract = (flags & ABSTRACT)     != 0;
+    bool isVirtual  = (flags & VIRTUAL)      != 0;
+    bool isFinal    = (flags & FINAL)        != 0;
+    bool isExtern   = (flags & PINVOKE_IMPL) != 0;
 
     std::string out;
 
@@ -284,15 +287,17 @@ std::string FormatMethodAccessor(Method* met) {
     }
 
     bool renderAbstract = isAbstract;
-    bool renderSealed   = isReuse && isFinal && !isAbstract;
+    bool renderSealed   = isReuse   &&  isFinal && !isAbstract;
     bool renderVirtual  = isVirtual && !isReuse && !isAbstract;
-    bool renderOverride = isReuse;
-    bool renderExtern   = (flags & PINVOKE_IMPL) != 0;
+    bool renderOverride = isVirtual &&  isReuse && !isAbstract;
+    bool renderStatic   = isStatic;
+    bool renderExtern   = isExtern;
 
     if (renderAbstract) out += "abstract ";
     if (renderSealed)   out += "sealed ";
     if (renderVirtual)  out += "virtual ";
     if (renderOverride) out += "override ";
+    if (renderStatic)   out += "static ";
     if (renderExtern)   out += "extern ";
 
     return out;
@@ -325,7 +330,7 @@ std::string FormatFieldAccessor(Field* fld) {
     }
 
     bool renderConst    = isConst;
-    bool renderStatic   = isStatic && !isConst;
+    bool renderStatic   = isStatic   && !isConst;
     bool renderReadonly = isReadonly && !isStatic;
     
     if (renderConst)    out += "const ";
@@ -363,37 +368,37 @@ std::string FormatParamType(Type* typ) {
 }
 
 std::vector<Object*> ObjListToVector(Object* obj, std::string_view tName = "") {
-    auto klass = obj->GetClass();
+    Class* klass = obj->GetClass();
 
-    auto getCount = Finder::FindMethodI(klass, "get_Count", "System.Int32", {});
-    if (!getCount) return {};
+    Method* vGetCount = Finder::FindMethodI(klass, "get_Count", "System.Int32", {});
+    if (!vGetCount) return {};
 
-    auto getItem = Finder::FindMethodI(klass, "get_Item", tName, {"System.Int32"});
-    if (!getItem) return {};
+    Method* vGetItem = Finder::FindMethodI(klass, "get_Item", tName, {"System.Int32"});
+    if (!vGetItem) return {};
 
-    getCount = obj->GetVirtualMethod(getCount);
-    getItem = obj->GetVirtualMethod(getItem);
+    vGetCount = obj->GetVirtualMethod(vGetCount);
+    vGetItem = obj->GetVirtualMethod(vGetItem);
 
-    if (!getCount) {
+    if (!vGetCount) {
         Log::Warn("get_Count is null for {}", FormatTypeName(klass->GetType()));
         return {};
     }
-    if (!getItem) {
+    if (!vGetItem) {
         Log::Warn("get_Item is null for {}", FormatTypeName(klass->GetType()));
         return {};
     }
 
-    auto countObj = getCount->Invoke(obj);
-    if (!countObj)
+    Object* countBox = vGetCount->Invoke(obj);
+    if (!countBox)
         return {};
 
-    int count = *reinterpret_cast<int*>(countObj->Unbox());
+    int count = *(int*) countBox->Unbox();
 
     std::vector<Object*> vec;
     vec.reserve(count);
 
     for (int i = 0; i < count; i++) {
-        auto v = getItem->Invoke(obj, i);
+        Object* v = vGetItem->Invoke(obj, i);
         vec.push_back(v);
     }
 

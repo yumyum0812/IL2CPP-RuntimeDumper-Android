@@ -1,5 +1,5 @@
 ## Description
-Runtime IL2CPP dumper for Android
+Runtime IL2CPP dumper for Android arm64
 
 ## Disclaimer
 This project is used for educational purposed only,
@@ -7,7 +7,7 @@ Please use this project at your own risk. We accept no responsibility for any da
 
 ## Features
 - Dump classes, fields, properties, methods
-- Dump generic classes, methods
+- Dump generic classe, method names
 - Dump custom attributes of classes, methods, fields, properties, parameters
 - Dump method RVAs, offsets
 - Dump field offsets
@@ -34,7 +34,7 @@ il2cpp_xxxx 0xABCDEF
 ```
 ### symbol_map.txt
 - Map of obuscated / shuffled symbol and API symbol
-#### Example**
+#### Example
 ```
 il2cpp_xxxx abcdefgh
 ...

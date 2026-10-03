@@ -36,10 +36,23 @@ namespace Log {
 
         if (_file.is_open()) {
             auto now = std::chrono::system_clock::now();
-            auto sec = std::chrono::duration<double>(
-                now - std::chrono::floor<std::chrono::minutes>(now)
-            ).count();
-            auto timestamp = std::format("{:%Y-%m-%d %H:%M}:{:06.3f}", now, sec);
+            auto tt = std::chrono::system_clock::to_time_t(now);
+            std::tm tm{};
+            localtime_r(&tt, &tm);
+            
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()
+            ).count() % 1000;
+            
+            auto timestamp = std::format(
+                "{:04}-{:02}-{:02} {:02}:{:02}.{:03}",
+                tm.tm_year + 1900,
+                tm.tm_mon + 1,
+                tm.tm_mday,
+                tm.tm_hour,
+                tm.tm_min,
+                ms
+            );
 
             _file << timestamp;
             _file << " [";
