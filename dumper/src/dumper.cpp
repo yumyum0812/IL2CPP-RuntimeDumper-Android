@@ -307,11 +307,11 @@ std::string FormatFieldAccessor(Field* fld) {
     int acc = flags & FIELD_ACCESS_MASK;
 
     const static std::map<int, std::string> accessMap = {
-        {FieldAttributes::PUBLIC, "public"},
-        {FieldAttributes::PRIVATE, "private"},
-        {FieldAttributes::FAMILY, "protected"},
-        {FieldAttributes::ASSEMBLY, "internal"},
-        {FieldAttributes::FAM_OR_ASSEM, "protected internal"},
+        {FieldAttributes::PUBLIC,        "public"},
+        {FieldAttributes::PRIVATE,       "private"},
+        {FieldAttributes::FAMILY,        "protected"},
+        {FieldAttributes::ASSEMBLY,      "internal"},
+        {FieldAttributes::FAM_OR_ASSEM,  "protected internal"},
         {FieldAttributes::FAM_AND_ASSEM, "private protected"},
     };
     
@@ -330,7 +330,7 @@ std::string FormatFieldAccessor(Field* fld) {
     
     if (renderConst)    out += "const ";
     if (renderStatic)   out += "static ";
-    if (renderReadonly) out += "readonly";
+    if (renderReadonly) out += "readonly ";
 
     return out;
 }
@@ -501,7 +501,7 @@ std::string FormatFieldValue(Field* fld) {
     if (klass->IsEnum())
         type = klass->GetEnumBaseType();
 
-    return FormatObjectCustom(
+    return " = " + FormatObjectCustom(
         type->GetTypeEnum(),
         [&]<typename T, bool>() -> T {
             return fld->GetStaticValue<T>();
@@ -1249,6 +1249,22 @@ void RunDumper() {
     Log::Debug("obtained external files dir: {}", extDirS);
     fs::path extDir(extDirS);
 
+    fs::path dir = fs::path(extDirS) / "runtime-dumper";
+    if (fs::exists(dir)) {
+        fs::remove_all(dir);
+        Log::Debug("cleaned dir");
+    }
+    
+    if (!fs::create_directories(dir)) {
+        Log::Debug("cannot create dir, {}", dir.c_str());
+        return;
+    }
+
+    fs::path logPath = dir / "log.txt";
+    Log::SetFile(logPath);
+
+    Log::Debug("initialized log file");
+
     auto libRes = LibResolver();
     auto res = GetApiResolver(extDir);
 
@@ -1301,17 +1317,6 @@ void RunDumper() {
     auto asms = dmn->GetAssemblies();
     Log::Debug("assemblies: {:d}", asms.size());
 
-    fs::path dir = fs::path(extDirS) / "runtime-dumper";
-    if (fs::exists(dir)) {
-        fs::remove_all(dir);
-        Log::Debug("cleaned dir");
-    }
-    
-    if (!fs::create_directories(dir)) {
-        Log::Debug("cannot create dir, {}", dir.c_str());
-        return;
-    }
-
     Log::Debug("dumping...");
     auto start = std::chrono::steady_clock::now();
 
@@ -1319,6 +1324,7 @@ void RunDumper() {
 
     for (auto a : asms) {
         Image* img = a->GetImage();
+        if (!img) continue;
         
         out << "// Assembly: ";
         out << img->GetName();
@@ -1329,6 +1335,9 @@ void RunDumper() {
 
     for (auto a : asms) {
         Image* img = a->GetImage();
+        if (!img) continue;
+        
+        Log::Debug("dumping assembly: {}", img->GetName());
 
         auto klasses = img->GetClasses();
         for (auto k : klasses) {
@@ -1348,4 +1357,5 @@ void RunDumper() {
     thr->Detach();
 
     Log::Debug("all finished!");
+    Log::CloseFile();
 }

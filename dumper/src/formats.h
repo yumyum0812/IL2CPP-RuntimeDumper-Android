@@ -4,32 +4,36 @@
 #include <format>
 
 namespace Formats {
-    std::string FormatCharLiteral(uint16_t v) {
+    const static std::map<char, std::string> charEscapes = {
+        {'\\', "\\\\"},
+        {'\n', "\\n"},
+        {'\0', "\\0"},
+        {'\a', "\\a"},
+        {'\f', "\\f"},
+        {'\n', "\\n"},
+        {'\r', "\\r"},
+        {'\t', "\\t"},
+        {'\v', "\\v"}
+    };
+
+    std::string FormatCharLiteral(uint16_t c) {
         std::string out;
-        if (std::iscntrl(v)) {
-            out = "\\x" + std::format("{:X}", v);
-        } else if (v == '\'') {
+        if (charEscapes.contains(c)) {
+            out += charEscapes.at(static_cast<char>(c));
+        } else if (c == '\'') {
             out = "\\'";
+        } else if (c < 0x7F && std::iscntrl(c)) {
+            out = "\\x" + std::format("{:X}", c);
+        } else if ((c >= 0xD800 && c <= 0xDFFF) || (c >= 0xFDD0 && c <= 0xFDEF) || c == 0xFFFE || c == 0xFFFF) {
+            out = std::format("\\u{:04X}", c);
         } else {
-            out = std::string(1, v);
+            out = std::string(1, c);
         }
 
         return "'" + out + "'";
     }
-    std::string FormalStringLiteral(std::string_view input) {
-        const static std::map<char, std::string> charEscapes = {
-            {'\\', "\\\\"},
-            {'"',  "\\\""},
-            {'\n', "\\n"},
-            {'\0', "\\0"},
-            {'\a', "\\a"},
-            {'\f', "\\f"},
-            {'\n', "\\n"},
-            {'\r', "\\r"},
-            {'\t', "\\t"},
-            {'\v', "\\v"}
-        };
 
+    std::string FormalStringLiteral(std::string_view input) {
         std::string result;
         for (char c : input) {
             if (charEscapes.contains(c)) {

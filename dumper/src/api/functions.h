@@ -61,7 +61,7 @@ class Api::Functions {
 
         R operator() (A... a) const {
             if (!fn)
-                throw std::runtime_error(std::format("call to null function: {}", _name));
+                throw std::runtime_error(std::format("call to uninitialized api call: {}", _name));
             return fn(std::forward<A>(a)...);
         }
     };
