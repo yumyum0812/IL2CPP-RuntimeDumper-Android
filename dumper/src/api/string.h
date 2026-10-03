@@ -7,14 +7,14 @@ namespace Api {
         String() = delete;
         
         static String* New(const char* cstr) {
-            return Functions::il2cpp_string_new(cstr);
+            return Functions::string_new(cstr);
         }
 
         std::u16string GetChars() {
-            auto s = Functions::il2cpp_string_chars(this);
+            auto s = Functions::string_chars(this);
             if (!s) return {};
             
-            auto len = static_cast<size_t>(Functions::il2cpp_string_length(this));
+            auto len = static_cast<size_t>(Functions::string_length(this));
             return {s, len};
         }
     };

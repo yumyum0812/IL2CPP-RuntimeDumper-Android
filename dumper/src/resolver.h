@@ -77,7 +77,7 @@ class ApiResolver {
 public:
     ApiResolver() = default;
     virtual ~ApiResolver() = default;
-    virtual void Resolve(LibResolver& lf, const std::vector<Api::Functions::IApiCall*>& calls) = 0;
+    virtual void Resolve(LibResolver& lf, const std::vector<Api::IApiCall*>& calls) = 0;
 };
 
 
@@ -89,7 +89,7 @@ public:
         this->symbolMap = symbolMap;
     }
 
-    void Resolve(LibResolver& lf, const std::vector<Api::Functions::IApiCall*>& calls) override {
+    void Resolve(LibResolver& lf, const std::vector<Api::IApiCall*>& calls) override {
         for (auto f : calls) {
             auto funcName = f->Name();
 
@@ -115,7 +115,7 @@ public:
         this->offMap = offMap;
     }
 
-    void Resolve(LibResolver& lf, const std::vector<Api::Functions::IApiCall*>& calls) override {
+    void Resolve(LibResolver& lf, const std::vector<Api::IApiCall*>& calls) override {
         for (auto f : calls) {
             auto funcName = f->Name();
             if (!offMap.contains(funcName)) {
@@ -134,10 +134,10 @@ bool InitApi(LibResolver& libRes, ApiResolver& res) {
     libRes.Resolve();
     
     Log::Debug("init: resolving api...");
-    res.Resolve(libRes, Api::Functions::_apiCalls);
-    
+    res.Resolve(libRes, Api::Functions::GetCalls());
+
     bool ok = true;
-    for (auto f : Api::Functions::_apiCalls) {
+    for (auto f : Api::Functions::GetCalls()) {
         if (!f->Valid()) {
             Log::Debug("init: function not initialized: {}", f->Name());
             ok = false;

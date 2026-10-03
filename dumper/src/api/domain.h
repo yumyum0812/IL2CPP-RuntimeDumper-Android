@@ -6,12 +6,12 @@ namespace Api {
         Domain() = delete;
         
         static Domain* GetInstance() {
-            return Functions::il2cpp_domain_get();
+            return Functions::domain_get();
         }
 
         std::vector<Assembly*> GetAssemblies() {
             size_t size = 0;
-            auto asms = Functions::il2cpp_domain_get_assemblies(this, &size);
+            auto asms = Functions::domain_get_assemblies(this, &size);
 
             std::vector<Assembly*> vec;
             vec.reserve(size);

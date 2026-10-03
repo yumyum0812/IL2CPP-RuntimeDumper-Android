@@ -9,16 +9,16 @@ namespace Api {
         Image() = delete;
         
         static Image* GetCorlib() {
-            return Functions::il2cpp_get_corlib();
+            return Functions::get_corlib();
         }
         
         std::string GetName() {
-            auto s = Functions::il2cpp_image_get_name(this);
+            auto s = Functions::image_get_name(this);
             return {s ? s : ""};
         }
 
         size_t GetClassCount() {
-            return Functions::il2cpp_image_get_class_count(this);
+            return Functions::image_get_class_count(this);
         }
 
         std::vector<Class*> GetClasses() {
@@ -27,7 +27,7 @@ namespace Api {
             std::vector<Class*> ret;
             ret.reserve(count);
             for (int i = 0; i < count; i++) {
-                Class* c = Functions::il2cpp_image_get_class(this, i);
+                Class* c = Functions::image_get_class(this, i);
                 if (c) ret.push_back(c);
             }
 
@@ -35,7 +35,7 @@ namespace Api {
         }
 
         Class* FindClass(const std::string& ns, const std::string& nm) {
-            return Functions::il2cpp_class_from_name(this, ns.c_str(), nm.c_str());
+            return Functions::class_from_name(this, ns.c_str(), nm.c_str());
         }
     };
 }

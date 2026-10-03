@@ -24,8 +24,11 @@
 #include "api/property.h"
 #include "utils/address.h"
 #include "utils/jni_util.h"
+#include "utils/str_util.h"
 #include "resolver.h"
 #include "log.h"
+#include "finder.h"
+#include "formats.h"
 
 using namespace Api;
 namespace fs = std::filesystem;
@@ -59,180 +62,57 @@ const std::unordered_map<int, std::string> typeSuffixes = {
     {TypeEnum::PTR, "*"},
 };
 
-const std::unordered_map<int, std::string> classAccessors = {
-    {TypeAttributes::PUBLIC, "public"},
-    {TypeAttributes::NESTED_PUBLIC, "public"},
-    {TypeAttributes::NOT_PUBLIC, "internal"},
-    {TypeAttributes::NESTED_FAM_AND_ASSEM, "private protected"},
-    {TypeAttributes::NESTED_ASSEMBLY, "internal"},
-    {TypeAttributes::NESTED_PRIVATE, "private"},
-    {TypeAttributes::NESTED_FAMILY, "protected"},
-    {TypeAttributes::NESTED_FAM_OR_ASSEM, "protected internal"},
-};
-
-const std::unordered_map<int, std::string> fieldAccessors = {
-    {FieldAttributes::PUBLIC, "public"},
-    {FieldAttributes::PRIVATE, "private"},
-    {FieldAttributes::FAMILY, "protected"},
-    {FieldAttributes::ASSEMBLY, "internal"},
-    {FieldAttributes::FAM_OR_ASSEM, "protected internal"},
-    {FieldAttributes::FAM_AND_ASSEM, "private protected"},
-};
-
-const std::unordered_map<int, std::string> methodAccessors = {
-    {MethodAttributes::PUBLIC, "public"},
-    {MethodAttributes::PRIVATE, "private"},
-    {MethodAttributes::ASSEM, "internal"},
-    {MethodAttributes::FAMILY, "protected"},
-    {MethodAttributes::FAM_OR_ASSEM, "protected internal"},
-    {MethodAttributes::FAM_AND_ASSEM, "private protected"},
-};
-
-const std::unordered_map<char, std::string> charEscapes = {
-    {'\\', "\\\\"},
-    {'"',  "\\\""},
-    {'\n', "\\n"},
-    {'\0', "\\0"},
-    {'\a', "\\a"},
-    {'\f', "\\f"},
-    {'\n', "\\n"},
-    {'\r', "\\r"},
-    {'\t', "\\t"},
-    {'\v', "\\v"}
-};
-
 
 uintptr_t libBase = 0;
 size_t structBoxSize = 0;
-Method* getUnityVer = nullptr;
-Class* typeC = nullptr;
-Method* arrGetValue = nullptr;
-Method* tGetGenericArgs = nullptr;
-Method* tGetField = nullptr;
-Method* tGetProp = nullptr;
-Method* mGetGenericArgs = nullptr;
-Method* mGetParams = nullptr;
+
 struct {
-    Method* getAttrs = nullptr;
-    Method* getAttrsP = nullptr;
-    Method* getAttType = nullptr;
-    Method* getCtorArgs = nullptr;
-    Method* getNamedArgs = nullptr;
-} attM;
-struct {
-    Method* getValue = nullptr;
-} attTypedArgM;
-struct {
-    Method* getName = nullptr;
-    Method* getTypedValue = nullptr;
-} attNamedArgM;
-struct {
-    Method* getAttrs = nullptr;
-    Method* getName = nullptr;
-    Method* getType = nullptr;
-    Method* getDefValue = nullptr;
-} paramM;
+    struct {
+        Method* get_unityVersion{};
+    } UnityEngine;
+    struct {
+        Method* GetValue;
+    } Array;
+    struct {
+        Method* get_Count{};
+    } ICollection;
+    struct {
+        Class* klass{};
+        Method* get_Item{};
+    } IList;
+    struct {
+        Class* klass{};
+        Method* GetGenericArguments{};
+        Method* GetField{};
+        Method* GetProperty{};
+    } Type;
+    struct {
+        Method* GetGenericArguments{};
+        Method* GetParameters{};
+    } MethodBase;
+    struct {
+        Method* GetCustomAttributesM{};
+        Method* GetCustomAttributesP{};
+        Method* get_AttributeType{};
+        Method* get_ConstructorArguments{};
+        Method* get_NamedArguments{};
+    } CustomAttributeData;
+    struct {
+        Method* get_MemberName{};
+        Method* get_TypedValue{};
+    } CustomAttributeNamedArgument;
+    struct {
+        Class* klass{};
+        Method* get_Value{};
+    } CustomAttributeTypedArgument;
+    struct ParameterInfo {
+        Method* get_Attributes{};
+        Method* get_Name{};
+        Method* get_Type{};
+        Method* get_DefaultValue{};
+    } ParameterInfo;
+} refl;
 
-
-std::string JoinStr(const std::vector<std::string>& vars, const std::string& delim) {
-    std::string out;
-    for (int i = 0; i < vars.size(); i++) {
-        if (i >= 1) out += delim;
-        out += vars[i];
-    }
-    return out;
-}
-
-std::string RepeatStr(const std::string& str, int n) {
-    std::string out;
-    for (int i = 0; i < n; i++) {
-        out += str;
-    }
-    return out;
-}
-
-void EraseSuffix(std::string& str, std::string_view suff) {
-    if (str.ends_with(suff))
-        str.erase(str.size() - suff.size());
-}
-
-std::string SubstrBefore(const std::string& str, const std::string& delim) {
-    size_t pos = str.find(delim);
-    return (pos != std::string::npos) ? str.substr(0, pos) : str;
-}
-
-std::string U16ToU8(const std::u16string& u16str) {
-    std::u8string u8str = std::filesystem::path(u16str).u8string();
-    return std::string(u8str.begin(), u8str.end());
-}
-
-Image* FindImage(const std::string& name) {
-    auto domain = Domain::GetInstance();
-    auto asms = domain->GetAssemblies();
-    for (auto a : asms) {
-        auto img = a->GetImage();
-        if (img->GetName() == name)
-            return img;
-    }
-    return nullptr;
-}
-
-Method* FindMethod(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
-    if (!klass) return nullptr;
-
-    auto methods = klass->GetMethods();
-
-    for (auto m : methods) {
-        if (m->GetName() != name) continue;
-
-        if (!rtName.empty()) {
-            auto rt = m->GetReturnType();
-            if (!rt || rt->GetName() != rtName) continue;
-        }
-
-        auto pc = m->GetParamCount();
-        if (pc != pNames.size()) continue;
-
-        bool ok = true;
-        for (int i = 0; i < pc; i++) {
-            auto c = m->GetParam(i);
-            if (!c || c->GetName() != pNames[i]) {
-                ok = false;
-                break;
-            }
-        }
-
-        if (ok) return m;
-    }
-
-    return nullptr;
-}
-
-Method* FindMethodP(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
-    if (!klass) return nullptr;
-
-    auto m = FindMethod(klass, name, rtName, pNames);
-    if (m) return m;
-
-    auto par = klass->GetParent();
-    if (par && par != klass)
-        return FindMethodP(par, name, rtName, pNames);
-    return nullptr;
-}
-
-Method* FindMethodI(Class* klass, const std::string& name, const std::string& rtName, const std::vector<std::string>& pNames) {
-    if (!klass) return nullptr;
-
-    auto m = FindMethod(klass, name, rtName, pNames);
-    if (m) return m;
-
-    auto inters = klass->GetInterfaces();
-    for (auto p : inters) {
-        if (!p || p == klass) continue;
-        return FindMethodI(p, name, rtName, pNames);
-    }
-    return nullptr;
-}
 
 std::string GetAppExtDir() {
     JavaVM* vm = JniUtil::GetJavaVM();
@@ -264,7 +144,7 @@ std::string GetAppExtDir() {
 }
 
 std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof = false) {
-    if(!t) return "?";
+    if (!t) return "?";
 
     auto klass = Class::FromType(t);
     auto tp = t->GetTypeEnum();
@@ -289,28 +169,28 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
     auto isGeneric = klass->IsGeneric();
     auto isInflated = klass->IsInflated();
 
-    if (arrGetValue && tGetGenericArgs && (isGeneric || isInflated)) {
+    if (refl.Array.GetValue && refl.Type.GetGenericArguments && (isGeneric || isInflated)) {
         auto to = t->GetObject();
-        auto getGensV = to->GetVirtualMethod(tGetGenericArgs);
+        auto getGensV = to->GetVirtualMethod(refl.Type.GetGenericArguments);
         if (getGensV) {
             auto args = (Array*) getGensV->Invoke(to);
             if (args) {
-                std::string pureName = SubstrBefore(name, "`");
+                std::string pureName = StrUtil::SubBefore(name, "`");
 
                 int len = args->GetLength();
 
                 if (!isInflated && forTypeof)
-                    return SubstrBefore(name, "`") + "<" + RepeatStr(",", len - 1) +  ">";
+                    return StrUtil::SubBefore(name, "`") + "<" + StrUtil::Repeat(",", len - 1) +  ">";
 
                 std::vector<std::string> ps;
                 for (int i = 0; i < len; i++) {
-                    auto p = arrGetValue->Invoke(args, i);
+                    auto p = refl.Array.GetValue->Invoke(args, i);
                     auto pt = Class::FromSystemType(p);
                     auto ptC = pt->GetType();
                     ps.push_back(FormatTypeName(ptC, forDefinition));
                 }
                 
-                return pureName + "<" + JoinStr(ps, ", ") + ">";
+                return pureName + "<" + StrUtil::Join(ps, ", ") + ">";
             }
         }
     }
@@ -319,23 +199,30 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
 }
 
 std::string FormatTypeType(Class* klass) {
+    bool isValueType = klass->IsValueType();
+    bool isEnum = klass->IsEnum();
+    int flags = klass->GetFlags();
+    
     using namespace TypeAttributes;
 
     std::string out;
 
-    int flags = klass->GetFlags();
+    bool isAbstract  = (flags & ABSTRACT) != 0;
+    bool isFinal     = (flags & SEALED) != 0;
+    bool isInterface = (flags & INTERFACE) != 0;
 
-    if ((flags & ABSTRACT) && (flags & SEALED))
+    if (isAbstract && isFinal)
         out += "static ";
-    else if ((flags & INTERFACE) && (flags & ABSTRACT))
+    else if (isInterface && isAbstract)
         out += "abstract ";
-    else if (!klass->IsValueType() && !klass->IsEnum() && (flags & SEALED))
+    else if (!isValueType && !isEnum && isFinal)
         out += "sealed ";
+
     if (flags & INTERFACE)
         out += "interface ";
-    else if (klass->IsEnum())
+    else if (isEnum)
         out += "enum ";
-    else if (klass->IsValueType())
+    else if (isValueType)
         out += "struct ";
     else
         out += "class ";
@@ -344,45 +231,69 @@ std::string FormatTypeType(Class* klass) {
 }
 
 std::string FormatTypeAccessor(Class* klass) {
-    using namespace TypeAttributes;
     int flags = klass->GetFlags();
 
-    int vis = flags & VISIBILITY_MASK;
-    if (classAccessors.contains(vis)) {
-        return classAccessors.at(vis) + " ";
+    using namespace TypeAttributes;
+
+    const static std::map<int, std::string> accessMap = {
+        {PUBLIC,               "public"},
+        {NESTED_PUBLIC,        "public"},
+        {NOT_PUBLIC,           "internal"},
+        {NESTED_FAM_AND_ASSEM, "private protected"},
+        {NESTED_ASSEMBLY,      "internal"},
+        {NESTED_PRIVATE,       "private"},
+        {NESTED_FAMILY,        "protected"},
+        {NESTED_FAM_OR_ASSEM,  "protected internal"},
+    };
+
+    int acc = flags & VISIBILITY_MASK;
+    if (accessMap.contains(acc)) {
+        return accessMap.at(acc) + " ";
     }
 
-    return {};
+    return "";
 }
 
 std::string FormatMethodAccessor(Method* met) {
+    int flags = met->GetFlags();
+    
     using namespace MethodAttributes;
+
+    int acc = flags & MEMBER_ACCESS_MASK;
+
+    const static std::map<int, std::string> accessMap = {
+        {PUBLIC,         "public"},
+        {PRIVATE,        "private"},
+        {FAM_AND_ASSEM,  "private protected"},
+        {FAM_OR_ASSEM,   "protected internal"},
+        {ASSEM,          "internal"},
+        {FAMILY,         "protected"}
+    };
+
+    bool isReuse    = (flags & VTABLE_LAYOUT_MASK) == REUSE_SLOT;
+    bool isStatic   = (flags & STATIC)   != 0;
+    bool isAbstract = (flags & ABSTRACT) != 0;
+    bool isVirtual  = (flags & VIRTUAL)  != 0;
+    bool isFinal    = (flags & FINAL)    != 0;
 
     std::string out;
 
-    int flags = met->GetFlags();
-    int isReuse = (flags & VTABLE_LAYOUT_MASK) == REUSE_SLOT;
-
-    int acc = flags & MEMBER_ACCESS_MASK;
-    if (methodAccessors.contains(acc)) {
-        out += methodAccessors.at(acc);
-        out += " ";
+    auto it = accessMap.find(acc);
+    if (it != accessMap.end()) {
+        out += it->second + " ";
     }
 
-    if (flags & STATIC)
-        out += "static ";
-    
-    if (flags & ABSTRACT) {
-        out += "abstract ";
-        if (isReuse) out += "override ";
-    } else if ((flags & FINAL) && isReuse) {
-        out += "sealed override ";
-    } else if (flags & VIRTUAL) {
-        out += isReuse ? "override " : "virtual ";
-    }
-    
-    if (flags & PINVOKE_IMPL)
-        out += "extern ";
+    bool renderAbstract = isAbstract;
+    bool renderSealed   = isReuse && isFinal && !isAbstract;
+    bool renderVirtual  = isVirtual && !isReuse && !isAbstract;
+    bool renderOverride = isReuse;
+    bool renderExtern   = (flags & PINVOKE_IMPL) != 0;
+
+    if (renderAbstract) out += "abstract ";
+    if (renderSealed)   out += "sealed ";
+    if (renderVirtual)  out += "virtual ";
+    if (renderOverride) out += "override ";
+    if (renderExtern)   out += "extern ";
 
     return out;
 }
@@ -393,62 +304,71 @@ std::string FormatFieldAccessor(Field* fld) {
     std::string out;
 
     int flags = fld->GetFlags();
-    int vis = flags & FIELD_ACCESS_MASK;
+    int acc = flags & FIELD_ACCESS_MASK;
 
-    if (fieldAccessors.contains(vis)) {
-        out += fieldAccessors.at(vis);
+    const static std::map<int, std::string> accessMap = {
+        {FieldAttributes::PUBLIC, "public"},
+        {FieldAttributes::PRIVATE, "private"},
+        {FieldAttributes::FAMILY, "protected"},
+        {FieldAttributes::ASSEMBLY, "internal"},
+        {FieldAttributes::FAM_OR_ASSEM, "protected internal"},
+        {FieldAttributes::FAM_AND_ASSEM, "private protected"},
+    };
+    
+    bool isConst    = (flags & LITERAL)   != 0;
+    bool isStatic   = (flags & STATIC)    != 0;
+    bool isReadonly = (flags & INIT_ONLY) != 0;
+
+    if (accessMap.contains(acc)) {
+        out += accessMap.at(acc);
         out += " ";
     }
 
-    if (flags & LITERAL) {
-        out += "const ";
-    } else {
-        if (flags & STATIC)
-            out += "static ";
-        
-        if (flags & INIT_ONLY)
-            out += "readonly ";
-    }
+    bool renderConst    = isConst;
+    bool renderStatic   = isStatic && !isConst;
+    bool renderReadonly = isReadonly && !isStatic;
+    
+    if (renderConst)    out += "const ";
+    if (renderStatic)   out += "static ";
+    if (renderReadonly) out += "readonly";
 
     return out;
 }
 
 std::string FormatParamType(Type* typ) {
+    int attrs = typ->GetAttrs();
+    bool isByRef = typ->IsByRef();
+
     using namespace ParameterAttributes;
 
     std::string out;
 
-    int attrs = typ->GetAttrs();
     bool isOut = (attrs & OUT) != 0;
-    bool isIn = (attrs & IN) != 0;
+    bool isIn  = (attrs & IN)  != 0;
 
-    if (typ->IsByRef()) {
+    if (isByRef) {
         if (isOut & isIn)
             out += "ref ";
-
         else if (isOut)
             out += "out ";
-
         else if (isIn)
             out += "in ";
             
     } else {
-        if (isIn)
-            out += "[In] ";
-        if (isOut)
-            out += "[Out] ";
+        if (isIn)  out += "[In] ";
+        if (isOut) out += "[Out] ";
     }
     
     return out;
 }
 
-std::vector<Object*> ObjListToVector(Object* obj, const std::string& tName = "") {
+std::vector<Object*> ObjListToVector(Object* obj, std::string_view tName = "") {
     auto klass = obj->GetClass();
 
-    auto getCount = FindMethodI(klass, "get_Count", "System.Int32", {});
+    auto getCount = Finder::FindMethodI(klass, "get_Count", "System.Int32", {});
     if (!getCount) return {};
 
-    auto getItem = FindMethodI(klass, "get_Item", tName, {"System.Int32"});
+    auto getItem = Finder::FindMethodI(klass, "get_Item", tName, {"System.Int32"});
     if (!getItem) return {};
 
     getCount = obj->GetVirtualMethod(getCount);
@@ -480,460 +400,56 @@ std::vector<Object*> ObjListToVector(Object* obj, const std::string& tName = "")
     return vec;
 }
 
-void FindReflectionMethod(Class* klass, const std::string& name, const std::string& rt, const std::vector<std::string>& params, Method** method, const std::string& debugSuffix = "") {
-    if(!(*method = FindMethod(klass, name, rt, params)))
-        Log::Warn("method {}.{}{} not found", klass->GetName(), name, debugSuffix);
-}
-
-void InitUnityReflection() {
-    Image* image = FindImage("UnityEngine.CoreModule.dll");
-    if (!image) {
-        Log::Warn("image UnityEngine.CoreModule.dll not found");
-        return;
-    }
-
-    Class* appC = image->FindClass("UnityEngine", "Application");
-    if (!appC) {
-        Log::Warn("class Application not found");
-        return;
-    }
-
-    FindReflectionMethod(appC,
-        "get_unityVersion",
-        "System.String",
-        {},
-        &getUnityVer
-    );
-}
-
-void InitBoxSize(Image* corlib) {
-    Class* objC = corlib->FindClass("System", "Object");
-    if (!objC) {
-        Log::Warn("class Object not found");
-        return;
-    }
-
-    structBoxSize = objC->GetInstanceSize();
-    Log::Debug("object box size: 0x{:X}", structBoxSize);
-}
-
-void InitReflection(Image* corlib) {
-    InitBoxSize(corlib);
-
-    typeC = corlib->FindClass("System", "Type");
-    if (!typeC) {
-        Log::Warn("class Type not found");
-    } else {
-        FindReflectionMethod(
-            typeC,
-            "GetGenericArguments",
-            "System.Type[]",
-            {},
-            &tGetGenericArgs
-        );
-        FindReflectionMethod(
-            typeC,
-            "GetField",
-            "System.Reflection.FieldInfo",
-            {"System.String"},
-            &tGetField
-        );
-        FindReflectionMethod(
-            typeC,
-            "GetProperty",
-            "System.Reflection.PropertyInfo",
-            {"System.String"},
-            &tGetProp
-        );
-    }
-
-    Class* methodC = corlib->FindClass("System.Reflection", "MethodBase");
-    if (!methodC) {
-        Log::Warn("class MethodBase not found");
-    } else {
-        FindReflectionMethod(
-            methodC,
-            "GetGenericArguments",
-            "System.Type[]",
-            {},
-            &mGetGenericArgs
-        );
-        FindReflectionMethod(
-            methodC,
-            "GetParameters",
-            "System.Reflection.ParameterInfo[]",
-            {},
-            &mGetParams
-        );
-    }
-
-    Class* parC = corlib->FindClass("System.Reflection", "ParameterInfo");
-    if (!parC) {
-        Log::Warn("class ParameterInfo not found");
-    } else {
-        FindReflectionMethod(
-            parC,
-            "get_Attributes",
-            "System.Reflection.ParameterAttributes",
-            {},
-            &paramM.getAttrs
-        );
-        FindReflectionMethod(
-            parC,
-            "get_DefaultValue",
-            "System.Object",
-            {},
-            &paramM.getDefValue
-        );
-        FindReflectionMethod(
-            parC,
-            "get_Name",
-            "System.String",
-            {},
-            &paramM.getName
-        );
-        FindReflectionMethod(
-            parC,
-            "get_ParameterType",
-            "System.Type",
-            {},
-            &paramM.getType
-        );
-    }
-
-    Class* arrC = corlib->FindClass("System", "Array");
-    if (!arrC) {
-        Log::Warn("class Array not found");
-    } else {
-        FindReflectionMethod(
-            arrC,
-            "GetValue",
-            "System.Object",
-            {"System.Int32"},
-            &arrGetValue
-        );
-    }
-
-    InitUnityReflection();
-}
-
-void InitReflectionAtt(Image* corlib) {
-    Class* attC = corlib->FindClass("System.Reflection", "CustomAttributeData");
-    if (!attC) {
-        Log::Warn("class CustomAttributeData not found");
-    } else {
-        FindReflectionMethod(
-            attC,
-            "GetCustomAttributes",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
-            {"System.Reflection.MemberInfo"},
-            &attM.getAttrs,
-            "(M)"
-        );
-
-        FindReflectionMethod(
-            attC,
-            "GetCustomAttributes",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
-            {"System.Reflection.ParameterInfo"},
-            &attM.getAttrsP,
-            "(P)"
-        );
-
-        FindReflectionMethod(
-            attC,
-            "get_AttributeType",
-            "System.Type",
-            {},
-            &attM.getAttType
-        );
-
-        FindReflectionMethod(
-            attC,
-            "get_ConstructorArguments",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>",
-            {},
-            &attM.getCtorArgs
-        );
-
-        FindReflectionMethod(
-            attC,
-            "get_NamedArguments",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>",
-            {},
-            &attM.getNamedArgs
-        );
-    }
-
-    Class* typedArgC = corlib->FindClass(
-        "System.Reflection",
-        "CustomAttributeTypedArgument"
-    );
-
-    if (!typedArgC) {
-        Log::Warn("class CustomAttributeTypedArgument not found");
-    } else {
-        FindReflectionMethod(
-            typedArgC,
-            "get_Value",
-            "System.Object",
-            {},
-            &attTypedArgM.getValue
-        );
-    }
-
-    Class* namedArgC = corlib->FindClass(
-        "System.Reflection",
-        "CustomAttributeNamedArgument"
-    );
-
-    if (!namedArgC) {
-        Log::Warn("class CustomAttributeNamedArgument not found");
-    } else {
-        FindReflectionMethod(
-            namedArgC,
-            "get_MemberName",
-            "System.String",
-            {},
-            &attNamedArgM.getName
-        );
-
-        FindReflectionMethod(
-            namedArgC,
-            "get_TypedValue",
-            "System.Reflection.CustomAttributeTypedArgument",
-            {},
-            &attNamedArgM.getTypedValue
-        );
-    }
-}
-
-std::string FormalStringLiteral(const std::string& input) {
-    std::string result;
-    for (char c : input) {
-        if (charEscapes.contains(c)) {
-            result += charEscapes.at(c);
-            continue;
-        }
-        if (std::iscntrl(c)) {
-            result += "\\x" + std::to_string(static_cast<int>(static_cast<unsigned char>(c)));
-            continue;
-        }
-        if (c == '"') {
-            result += "\\\"";
-            continue;
-        }
-        result += c;
-    }
-    return "\"" + result + "\"";
-}
-
-template <std::integral T>
-std::string FormatInteger(T value) {
-    return std::format("{:d}", value);
-}
-
-template <std::floating_point T>
-std::string FormatFloat(T value) {
-    auto s = std::format("{}", value);
-    if (!s.empty() &&
-        std::all_of(s.begin() + (s.front() == '-' ? 1 : 0), s.end(), [](unsigned char c) {
-            return std::isdigit(c);
-        })) {
-        s += ".0";
-    }
-    return s;
-}
-
-template <std::integral T>
-std::string FormatOffset(T value) {
-    if (value < 0) {
-        using U = std::make_unsigned_t<T>;
-        const auto magnitude = U{0} - static_cast<U>(value);
-        return std::format("-0x{:X}", magnitude);
-    }
-    return std::format("0x{:X}", value);
-}
-
-std::string FormatClassSpecial(Class* klass) {
-    // using namespace TypeAttributes;
-    // int flags = klass->GetFlags();
-    // if (flags & SPECIAL_NAME) {
-    //     return " /* ★ */";
-    // }
-    return "";
-}
-
-std::string FormatMethodSpecial(Method* met) {
-    // using namespace MethodAttributes;
-    // int flags = met->GetFlags();
-    // if (flags & SPECIAL_NAME) {
-    //     return " /* ★ */";
-    // }
-    return "";
-}
-
-std::string FormatFieldSpecial(Field* fld) {
-    // using namespace FieldAttributes;
-    // int flags = fld->GetFlags();
-    // if (flags & SPECIAL_NAME) {
-    //     return " /* ★ */";
-    // }
-    return "";
-}
-
-std::string FormatFieldValue(Field* fld) {
-    using namespace FieldAttributes;
+template <typename Getter>
+std::string FormatObjectCustom(int typeEnum, Getter&& getter) {
     using namespace TypeEnum;
-
-    int flags = fld->GetFlags();
-    bool isConst = (flags & LITERAL) != 0;
-
-    if (!isConst) return "";
-
-    auto type = fld->GetType();
-    auto klass = Class::FromType(type);
-    if (klass->IsEnum()) {
-        type = klass->GetEnumBaseType();
-    }
 
     std::string out;
 
     auto appendInteger = [&]<std::integral T>() {
-        T v = fld->GetStaticValue<T>();
-        out += FormatInteger<T>(v);
+        T v = getter.template operator()<T, true>();
+        out += Formats::FormatInteger<T>(v);
     };
 
     auto appendFloat = [&]<std::floating_point T>() {
-        T v = fld->GetStaticValue<T>();
-        out += FormatFloat<T>(v);
+        T v = getter.template operator()<T, true>();
+        out += Formats::FormatFloat<T>(v);
     };
 
-    switch (type->GetTypeEnum()) {
-        case TypeEnum::CHAR: {
-            uint16_t v = fld->GetStaticValue<uint16_t>();
-            
-            out += "'";
-            if (std::iscntrl(v)) {
-                out += "\\x" + std::format("{:X}", v);
-            } else if (v == '\'') {
-                out += "\\'";
-            } else {
-                out += std::string(1, v);
-            }
-            out += "'";
+    switch (typeEnum) {
+        case CHAR: {
+            uint16_t v = getter.template operator()<uint16_t, true>();
+            out += Formats::FormatCharLiteral(v);
         } break;
 
-        case TypeEnum::BOOLEAN: {
-            bool value = fld->GetStaticValue<bool>();
+        case BOOLEAN: {
+            bool value = getter.template operator()<bool, true>();
             out += value ? "true" : "false";
         } break;
 
-        case TypeEnum::STRING: {
-            auto* value = fld->GetStaticValue<String*>();
-            if (!value) out += "null";
+        case STRING: {
+            String* value = getter.template operator()<String*, false>();
+
+            if (!value)
+                return "null";
 
             auto u16s = value->GetChars();
-            auto s = U16ToU8(u16s);
-            out += FormalStringLiteral(s);
+            std::string s = StrUtil::U16ToU8(u16s);
+            out += Formats::FormalStringLiteral(s);
         } break;
 
-        case TypeEnum::CLASS:
-        case TypeEnum::OBJECT: {
-            auto* value = fld->GetStaticValue<Object*>();
-            if (!value) out += "null";
-        } break;
-
-        case TypeEnum::I1: appendInteger.operator()<int8_t>(); break;
-        case TypeEnum::U1: appendInteger.operator()<uint8_t>(); break;
-        case TypeEnum::I2: appendInteger.operator()<int16_t>(); break;
-        case TypeEnum::U2: appendInteger.operator()<uint16_t>(); break;
-        case TypeEnum::I4: appendInteger.operator()<int32_t>(); break;
-        case TypeEnum::U4: appendInteger.operator()<uint32_t>(); break;
-        case TypeEnum::I8: appendInteger.operator()<int64_t>(); break;
-        case TypeEnum::U8: appendInteger.operator()<uint64_t>(); break;
-        case TypeEnum::I:  appendInteger.operator()<intptr_t>(); break;
-        case TypeEnum::U:  appendInteger.operator()<uintptr_t>(); break;
-        case TypeEnum::R4: appendFloat.operator()<float>(); break;
-        case TypeEnum::R8: appendFloat.operator()<double>(); break;
-    }
-
-    if (!out.empty()) {
-        out = " = " + out;
-    }
-
-    return out;
-}
-
-std::string FormatObject(Object* obj) {
-    using namespace TypeEnum;
-
-    if (!obj) return "null";
-
-    auto klass = obj->GetClass();
-    auto type = klass->GetType();
-
-    if (klass->IsEnum()) {
-        type = klass->GetEnumBaseType();
-    }
-
-    std::string out;
-
-    auto appendInteger = [&]<std::integral T>() {
-        T v = *(T*) obj->Unbox();
-        out += FormatInteger<T>(v);
-    };
-
-    auto appendFloat = [&]<std::floating_point T>() {
-        T v = *(T*) obj->Unbox();
-        out += FormatFloat<T>(v);
-    };
-
-    switch (type->GetTypeEnum()) {
-        case TypeEnum::CHAR: {
-            uint16_t v = *(uint16_t*) obj->Unbox();
-            
-            out += "'";
-            if (std::iscntrl(v))
-                out += "\\x" + std::format("{:X}", v);
-            else if (v == '\'')
-                out += "\\'";
-            else
-                out += std::string(1, v);
-            
-            out += "'";
-        } break;
-
-        case TypeEnum::BOOLEAN: {
-            bool value = *(bool*) obj->Unbox();
-            out += value ? "true" : "false";
-        } break;
-
-        case TypeEnum::STRING: {
-            auto* value = (String*) obj;
-            auto u16s = value->GetChars();
-            auto s = U16ToU8(u16s);
-            out += FormalStringLiteral(s);
-        } break;
-
-        case TypeEnum::I1: appendInteger.operator()<int8_t>(); break;
-        case TypeEnum::U1: appendInteger.operator()<uint8_t>(); break;
-        case TypeEnum::I2: appendInteger.operator()<int16_t>(); break;
-        case TypeEnum::U2: appendInteger.operator()<uint16_t>(); break;
-        case TypeEnum::I4: appendInteger.operator()<int32_t>(); break;
-        case TypeEnum::U4: appendInteger.operator()<uint32_t>(); break;
-        case TypeEnum::I8: appendInteger.operator()<int64_t>(); break;
-        case TypeEnum::U8: appendInteger.operator()<uint64_t>(); break;
-        case TypeEnum::I:  appendInteger.operator()<intptr_t>(); break;
-        case TypeEnum::U:  appendInteger.operator()<uintptr_t>(); break;
-        case TypeEnum::R4: appendFloat.operator()<float>(); break;
-        case TypeEnum::R8: appendFloat.operator()<double>(); break;
-        case TypeEnum::CLASS: {
-            if (typeC && typeC->IsAssignableFrom(obj->GetClass())) {
-                auto tName = Class::FromSystemType(obj)->GetType();
-                return "typeof(" + FormatTypeName(tName, false, true) + ")";
-            }
-        } break;
+        case I1: appendInteger.template operator()<int8_t>(); break;
+        case U1: appendInteger.template operator()<uint8_t>(); break;
+        case I2: appendInteger.template operator()<int16_t>(); break;
+        case U2: appendInteger.template operator()<uint16_t>(); break;
+        case I4: appendInteger.template operator()<int32_t>(); break;
+        case U4: appendInteger.template operator()<uint32_t>(); break;
+        case I8: appendInteger.template operator()<int64_t>(); break;
+        case U8: appendInteger.template operator()<uint64_t>(); break;
+        case I:  appendInteger.template operator()<intptr_t>(); break;
+        case U:  appendInteger.template operator()<uintptr_t>(); break;
+        case R4: appendFloat.template operator()<float>(); break;
+        case R8: appendFloat.template operator()<double>(); break;
     }
 
     if (out.empty())
@@ -942,65 +458,156 @@ std::string FormatObject(Object* obj) {
     return out;
 }
 
-void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl) {
+std::string FormatObject(Object* obj) {
+    using namespace TypeEnum;
+
+    if (!obj)
+        return "null";
+
+    auto klass = obj->GetClass();
+    auto type = klass->GetType();
+
+    if (refl.Type.klass && refl.Type.klass->IsAssignableFrom(klass)) {
+        auto tName = Class::FromSystemType(obj)->GetType();
+        return "typeof(" + FormatTypeName(tName, false, true) + ")";
+    }
+
+    if (klass->IsEnum())
+        type = klass->GetEnumBaseType();
+
+    return FormatObjectCustom(
+        type->GetTypeEnum(),
+        [&]<typename T, bool unboxed>() -> T {
+            if constexpr (!unboxed) {
+                return (T) obj;
+            }
+            return *(T*) obj->Unbox();
+        }
+    );
+}
+
+std::string FormatFieldValue(Field* fld) {
+    using namespace FieldAttributes;
+
+    int flags = fld->GetFlags();
+    bool isConst = (flags & LITERAL) != 0;
+
+    if (!isConst)
+        return "";
+
+    auto type = fld->GetType();
+    auto klass = Class::FromType(type);
+
+    if (klass->IsEnum())
+        type = klass->GetEnumBaseType();
+
+    return FormatObjectCustom(
+        type->GetTypeEnum(),
+        [&]<typename T, bool>() -> T {
+            return fld->GetStaticValue<T>();
+        }
+    );
+}
+
+std::string FormatAttrTyped(Object* typed) {
+    if (!typed) return "?";
+
+    void* typedUnbox = typed->Unbox();
+    if (!typedUnbox) return "?";
+
+    Object* v = refl.CustomAttributeTypedArgument.get_Value->Invoke(typedUnbox);
+    if (!v) return "null";
+
+    Class* klass = v->GetClass();
+    if (!klass) return "?";
+
+    if (refl.IList.klass && refl.IList.get_Item && refl.ICollection.get_Count && refl.IList.klass->IsAssignableFrom(klass)) {
+        Method* vGetItem = v->GetVirtualMethod(refl.IList.get_Item);
+        if (!vGetItem) return "?";
+
+        Method* vGetCount = v->GetVirtualMethod(refl.ICollection.get_Count);
+        if (!vGetCount) return "?";
+
+        Object* countO = vGetCount->Invoke(v);
+        if (!countO) return "?";
+
+        int count = *(int*) countO->Unbox();
+
+        std::vector<std::string> valueFmts;
+        for (int i = 0; i < count; i++) {
+            Object* vv = vGetItem->Invoke(v, i);
+            Class* k = vv ? vv->GetClass() : nullptr;
+            
+            if (k && refl.CustomAttributeTypedArgument.klass->IsAssignableFrom(k))
+                valueFmts.push_back(FormatAttrTyped(vv));
+            else
+                valueFmts.push_back(FormatObject(vv));
+        }
+
+        return "new[] {" + StrUtil::Join(valueFmts, ", ") + "}";
+    };
+
+    return FormatObject(v);
+}
+
+void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
     auto attrsV = ObjListToVector(attrs, "System.Reflection.CustomAttributeData");
     for (Object* attr : attrsV) {
         if (!attr) continue;
 
-        Object* attTypeO = attM.getAttType->Invoke(attr);
-        if (!attTypeO) continue;
+        Object* attrTO = refl.CustomAttributeData.get_AttributeType->Invoke(attr);
+        if (!attrTO) continue;
 
-        auto attC = Class::FromSystemType(attTypeO);
-        if (!attC) continue;
+        auto attrC = Class::FromSystemType(attrTO);
+        if (!attrC) continue;
         
-        auto attTypeName = attC->GetName();
-        EraseSuffix(attTypeName, "Attribute");
+        auto attrNs = attrC->GetNamespace();
+        auto attrTypeName = attrC->GetName();
 
-        out << RepeatStr(INDENT, ind);
+        bool skip = false;
+        for (auto [ns, n] : excludes) {
+            if (ns == attrNs && n == attrTypeName) {
+                skip = true;
+                break;
+            }
+        }
+        if (skip) break;
+
+        StrUtil::EraseSuffix(attrTypeName, "Attribute");
+
+        out << StrUtil::Repeat(INDENT, ind);
         out << "[";
-        out << attTypeName;
+        out << attrTypeName;
 
-        Object* constrs = attM.getCtorArgs->Invoke(attr);
-        if (!constrs) continue;
+        Object* constrsO = refl.CustomAttributeData.get_ConstructorArguments->Invoke(attr);
+        if (!constrsO) continue;
 
-        Object* nameds = attM.getNamedArgs->Invoke(attr);
-        if (!nameds) continue;
+        Object* namedsO = refl.CustomAttributeData.get_NamedArguments->Invoke(attr);
+        if (!namedsO) continue;
 
-        auto constrsV = ObjListToVector(constrs, "System.Reflection.CustomAttributeTypedArgument");
-        auto namedsV = ObjListToVector(nameds, "System.Reflection.CustomAttributeNamedArgument");
+        auto constrs = ObjListToVector(constrsO, "System.Reflection.CustomAttributeTypedArgument");
+        auto nameds = ObjListToVector(namedsO, "System.Reflection.CustomAttributeNamedArgument");
 
         std::vector<std::string> argStrs;
-        for (Object* typed : constrsV) {
-            if (!typed) continue;
-
-            void* typedUnbox = typed->Unbox();
-            if (!typedUnbox) continue;
-
-            Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
-            argStrs.push_back(FormatObject(v));
+        for (Object* typed : constrs) {
+            argStrs.push_back(FormatAttrTyped(typed));
         }
-        for (Object* named : namedsV) {
+        for (Object* named : nameds) {
             if (!named) continue;
 
             void* namedUnbox = named->Unbox();
             if (!namedUnbox) continue;
 
-            String* memberNameS = (String*) attNamedArgM.getName->Invoke(namedUnbox);
-            auto memberName = memberNameS ? U16ToU8(memberNameS->GetChars()) : "null";
+            String* memberNameS = (String*) refl.CustomAttributeNamedArgument.get_MemberName->Invoke(namedUnbox);
+            auto memberName = memberNameS ? StrUtil::U16ToU8(memberNameS->GetChars()) : "?";
 
-            Object* typed = attNamedArgM.getTypedValue->Invoke(namedUnbox);
-            if (!typed) continue;
-
-            void* typedUnbox = typed->Unbox();
-            if (!typedUnbox) continue;
-
-            Object* v = attTypedArgM.getValue->Invoke(typedUnbox);
-            argStrs.push_back(memberName + " = " + FormatObject(v));
+            Object* typed = refl.CustomAttributeNamedArgument.get_TypedValue->Invoke(namedUnbox);
+            argStrs.push_back(memberName + " = " + FormatAttrTyped(typed));
         }
 
         if (!argStrs.empty()) {
             out << "(";
-            out << JoinStr(argStrs, ", ");
+            out << StrUtil::Join(argStrs, ", ");
             out << ")";
         }
         out << "]";
@@ -1008,28 +615,31 @@ void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl) {
     }
 }
 
-void DoMemberAttr(Object* memberInfo, std::ostream& out, int ind = 1) {
+void DoMemberForAttr(Object* memberInfo, std::ostream& out, int ind = 1) {
     if (!memberInfo) return;
 
-    if (!attM.getAttrs ||
-        !attM.getAttType || !attM.getCtorArgs || !attM.getNamedArgs ||
-        !attTypedArgM.getValue || !attNamedArgM.getTypedValue ||
-        !attNamedArgM.getName
+    if (!refl.CustomAttributeData.GetCustomAttributesM ||
+        !refl.CustomAttributeData.get_AttributeType ||
+        !refl.CustomAttributeData.get_ConstructorArguments ||
+        !refl.CustomAttributeData.get_NamedArguments ||
+        !refl.CustomAttributeTypedArgument.get_Value ||
+        !refl.CustomAttributeNamedArgument.get_TypedValue ||
+        !refl.CustomAttributeNamedArgument.get_MemberName
     ) return;
 
-    Object* attrs = attM.getAttrs->Invoke(nullptr, memberInfo);
+    Object* attrs = refl.CustomAttributeData.GetCustomAttributesM->Invoke(nullptr, memberInfo);
     if (!attrs) return;
     
     DoAttr(attrs, out, ind, true);
 }
 
-void DoParamAttr(Object* paramInfo, std::ostream& out) {
+void DoParamAttr(Object* paramInfo, std::ostream& out, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
     if (!paramInfo) return;
 
-    Object* attrs = attM.getAttrsP->Invoke(nullptr, paramInfo);
+    Object* attrs = refl.CustomAttributeData.GetCustomAttributesP->Invoke(nullptr, paramInfo);
     if (!attrs) return;
 
-    DoAttr(attrs, out, 0, false);
+    DoAttr(attrs, out, 0, false, excludes);
 }
 
 void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
@@ -1066,27 +676,27 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     }
 
     Object* to = type->GetObject();
-    DoMemberAttr(to, out, 0);
+    DoMemberForAttr(to, out, 0);
 
     std::string ext;
     if (!extNames.empty()) {
-        ext = " : " + JoinStr(extNames, ", ");
+        ext = " : " + StrUtil::Join(extNames, ", ");
     }
 
-    out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + " {" + FormatClassSpecial(klass);
+    out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + " {";
     out << "\n";
 
     auto fields = klass->GetFields();
     for (auto f : fields) {
-        if (tGetField) {
+        if (refl.Type.GetField) [&]{
             auto fName = f->GetName();
             auto fNameS = String::New(fName.c_str());
-            auto gf = to->GetVirtualMethod(tGetField);
-            if (gf) {
-                auto fo = gf->Invoke(to, fNameS);
-                DoMemberAttr(fo, out);
-            }
-        }
+            auto vGetField = to->GetVirtualMethod(refl.Type.GetField);
+            if (!vGetField) return;
+
+            auto fO = vGetField->Invoke(to, fNameS);
+            DoMemberForAttr(fO, out);
+        }();
 
         auto fType = f->GetType();
         auto fFlag = f->GetFlags();
@@ -1111,10 +721,9 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             }
 
             out << " // ";
-            out << FormatOffset(off - pad);
+            out << Formats::FormatOffset(off - pad);
         }
-
-        out << FormatFieldSpecial(f);
+        
         out << "\n";
     }
 
@@ -1126,14 +735,14 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     for (auto p : props) {
         auto pName = p->GetName();
 
-        if (tGetField) {
-            auto pNameS = String::New(pName.c_str());
-            auto gf = to->GetVirtualMethod(tGetField);
-            if (gf) {
-                auto po = gf->Invoke(to, pNameS);
-                DoMemberAttr(po, out);
-            }
-        }
+        if (refl.Type.GetField) [&]{
+            auto pNameO = String::New(pName.c_str());
+            auto vGetProperty = to->GetVirtualMethod(refl.Type.GetProperty);
+            if (!vGetProperty) return;
+
+            auto pO = vGetProperty->Invoke(to, pNameO);
+            DoMemberForAttr(pO, out);
+        }();
 
         auto fGet = p->GetGetMethod();
         auto fSet = p->GetSetMethod();
@@ -1152,68 +761,89 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     
     auto methods = klass->GetMethods();
     for (auto m : methods) {
-        auto mo = m->GetObject();
         auto mName = m->GetName();
-        auto rt = m->GetReturnType();
+        auto mObj = m->GetObject();
+        auto mRT = m->GetReturnType();
         bool isGeneric = m->IsGeneric();
         bool isInflated = m->IsInflated();
         bool isAbstract = (m->GetFlags() & MethodAttributes::ABSTRACT) != 0;
 
         std::vector<std::string> parFmts;
 
-        if (mGetParams && paramM.getDefValue && paramM.getName && paramM.getType && paramM.getAttrs) [&]{
-            auto vGetParams = mo->GetVirtualMethod(mGetParams);
+        if (
+            refl.Array.GetValue &&
+            refl.MethodBase.GetParameters &&
+            refl.ParameterInfo.get_DefaultValue &&
+            refl.ParameterInfo.get_Name &&
+            refl.ParameterInfo.get_Type &&
+            refl.ParameterInfo.get_Attributes
+        ) [&]{
+            auto vGetParams = mObj->GetVirtualMethod(refl.MethodBase.GetParameters);
             if (!vGetParams) return;
 
-            auto arr = (Array*) vGetParams->Invoke(mo);
+            auto arr = (Array*) vGetParams->Invoke(mObj);
             if (!arr) return;
 
             int len = arr->GetLength();
+            int lenI = m->GetParamCount();
+            if (lenI < len) return;
+
             for (int i = 0; i < len; i++) {
-                auto obj = arrGetValue->Invoke(arr, i);
+                auto obj = refl.Array.GetValue->Invoke(arr, i);
                 if (!obj) continue;
 
-                auto vGetName = obj->GetVirtualMethod(paramM.getName);
-                auto vGetType = obj->GetVirtualMethod(paramM.getType);
-                auto vGetDefV = obj->GetVirtualMethod(paramM.getDefValue);
-                auto vGetAttrs = obj->GetVirtualMethod(paramM.getAttrs);
+                auto vGetName = obj->GetVirtualMethod(refl.ParameterInfo.get_Name);
+                auto vGetType = obj->GetVirtualMethod(refl.ParameterInfo.get_Type);
+                auto vGetDefV = obj->GetVirtualMethod(refl.ParameterInfo.get_DefaultValue);
+                auto vGetAttrs = obj->GetVirtualMethod(refl.ParameterInfo.get_Attributes);
                 if (!vGetName) continue;
                 if (!vGetType) continue;
                 if (!vGetDefV) continue;
                 if (!vGetAttrs) continue;
 
-                auto typeO = vGetType->Invoke(obj);
-                if (!typeO) continue;
-                
-                auto kls = Class::FromSystemType(typeO);
-                if (!kls) continue;
+                auto type = m->GetParam(i);
+                if (!type) continue;
+
+                auto isByRef = type->IsByRef();
 
                 auto nameO = (String*) vGetName->Invoke(obj);
-                auto name = nameO ? U16ToU8(nameO->GetChars()) : "?";
+                auto name = nameO ? StrUtil::U16ToU8(nameO->GetChars()) : "?";
 
                 auto attrsO = vGetAttrs->Invoke(obj);
                 int attrs = *(int*) attrsO->Unbox();
 
+                bool hasDefValue = attrs & ParameterAttributes::HAS_DEFAULT;
+
                 std::string s;
                 std::ostringstream atts;
-                DoParamAttr(obj, atts);
+                std::vector<std::pair<std::string, std::string>> excs;
+                if (isByRef) {
+                    excs.push_back({"System.Runtime.InteropServices", "InAttribute"});
+                    excs.push_back({"System.Runtime.InteropServices", "OutAttribute"});
+                }
+                if (hasDefValue) {
+                    excs.push_back({"System.Runtime.InteropServices", "OptionalAttribute"});
+                }
+                DoParamAttr(obj, atts, excs);
                 s += atts.str();
 
                 bool isIn = (attrs & ParameterAttributes::IN) != 0;
                 bool isOut = (attrs & ParameterAttributes::OUT) != 0;
-                if (isIn && isOut) {
-                    s += "ref ";
-                } else if (isIn) {
-                    s += "in ";
-                } else if (isOut) {
-                    s += "out ";
+                if (isByRef) {
+                    if (isIn && isOut) {
+                        s += "ref ";
+                    } else if (isIn) {
+                        s += "in ";
+                    } else if (isOut) {
+                        s += "out ";
+                    }
                 }
 
-                s += FormatTypeName(kls->GetType());
+                s += FormatTypeName(type);
                 s += " ";
                 s += name;
 
-                if (attrs & ParameterAttributes::HAS_DEFAULT) {
+                if (hasDefValue) {
                     auto defO = vGetDefV->Invoke(obj);
                     s += " = " + FormatObject(defO);
                 }
@@ -1246,45 +876,44 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         out << "\n";
 
         out << INDENT;
-        out << std::format("// RVA: {} Offset: {} VA: {}", FormatOffset(rva), FormatOffset(off), FormatOffset(rva));
+        out << std::format("// RVA: {} Offset: {} VA: {}", Formats::FormatOffset(rva), Formats::FormatOffset(off), Formats::FormatOffset(rva));
         out << "\n";
 
-        DoMemberAttr(mo, out);
+        DoMemberForAttr(mObj, out);
 
         out << INDENT;
         out << FormatMethodAccessor(m);
-        out << FormatTypeName(rt);
+        out << FormatTypeName(mRT);
         out << " ";
         out << mName;
         
-        if ((isInflated || isGeneric) && arrGetValue && mGetGenericArgs) {
+        if ((isInflated || isGeneric) && refl.Array.GetValue && refl.MethodBase.GetGenericArguments) [&]{
             auto to = m->GetObject();
-            auto getGensV = to->GetVirtualMethod(mGetGenericArgs);
-            if (getGensV) {
-                auto args = (Array*) getGensV->Invoke(to);
-                if (args) {
-                    int len = args->GetLength();
+            auto getGensV = to->GetVirtualMethod(refl.MethodBase.GetGenericArguments);
+            if (!getGensV) return;
 
-                    std::vector<std::string> pNames;
-                    for (int i = 0; i < len; i++) {
-                        auto p = arrGetValue->Invoke(args, i);
-                        auto pt = Class::FromSystemType(p);
+            auto args = (Array*) getGensV->Invoke(to);
+            if (!args) return;
 
-                        pNames.push_back(FormatTypeName(pt->GetType()));
-                    }
-                    
-                    out << "<";
-                    out << JoinStr(pNames, ", ");
-                    out << ">";
-                }
+            int len = args->GetLength();
+
+            std::vector<std::string> pNames;
+            for (int i = 0; i < len; i++) {
+                auto p = refl.Array.GetValue->Invoke(args, i);
+                auto pt = Class::FromSystemType(p);
+
+                pNames.push_back(FormatTypeName(pt->GetType()));
             }
-        }
+            
+            out << "<";
+            out << StrUtil::Join(pNames, ", ");
+            out << ">";
+        }();
 
         out << "(";
-        out << JoinStr(parFmts, ", ");
+        out << StrUtil::Join(parFmts, ", ");
         out << ")";
         out << (isAbstract ? ";" : " { }");
-        out << FormatMethodSpecial(m);
         out << "\n";
     }
 
@@ -1293,6 +922,244 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     out << "\n";
 
     out.flush();
+}
+
+Class* FindReflClass(Image* img, const std::string& ns, const std::string& name) {
+    Class* ret = img->FindClass(ns, name);
+    if (!ret)
+        Log::Warn("class {}.{} not found", ns, name);
+
+    return ret;
+}
+
+void FindReflMethod(Class* klass, std::string_view name, std::string_view rt, const std::vector<std::string_view>& params, Method** method, std::string_view debugSuffix = {}) {
+    if(!(*method = Finder::FindMethod(klass, name, rt, params)))
+        Log::Warn("method {}.{}{} not found", klass->GetName(), name, debugSuffix);
+}
+
+void InitUnityReflection() {
+    Image* image = Finder::FindImage("UnityEngine.CoreModule.dll");
+    if (!image) {
+        Log::Warn("image UnityEngine.CoreModule.dll not found");
+        return;
+    }
+
+    Class* appC = FindReflClass(image, "UnityEngine", "Application");
+    if (!appC) return;
+
+    FindReflMethod(appC,
+        "get_unityVersion",
+        "System.String",
+        {},
+        &refl.UnityEngine.get_unityVersion
+    );
+}
+
+void InitBoxSize(Image* corlib) {
+    Class* objC = FindReflClass(corlib, "System", "Object");
+    if (!objC) return;
+
+    structBoxSize = objC->GetInstanceSize();
+    Log::Debug("object box size: 0x{:X}", structBoxSize);
+}
+
+void InitReflection(Image* corlib) {
+    InitBoxSize(corlib);
+
+    refl.Type.klass = FindReflClass(corlib, "System", "Type");
+    if (refl.Type.klass) {
+        FindReflMethod(
+            refl.Type.klass,
+            "GetGenericArguments",
+            "System.Type[]",
+            {},
+            &refl.Type.GetGenericArguments
+        );
+        FindReflMethod(
+            refl.Type.klass,
+            "GetField",
+            "System.Reflection.FieldInfo",
+            {"System.String"},
+            &refl.Type.GetField
+        );
+        FindReflMethod(
+            refl.Type.klass,
+            "GetProperty",
+            "System.Reflection.PropertyInfo",
+            {"System.String"},
+            &refl.Type.GetProperty
+        );
+    }
+
+    Class* methodC = FindReflClass(corlib, "System.Reflection", "MethodBase");
+    if (methodC) {
+        FindReflMethod(
+            methodC,
+            "GetGenericArguments",
+            "System.Type[]",
+            {},
+            &refl.MethodBase.GetGenericArguments
+        );
+        FindReflMethod(
+            methodC,
+            "GetParameters",
+            "System.Reflection.ParameterInfo[]",
+            {},
+            &refl.MethodBase.GetParameters
+        );
+    }
+
+    Class* parC = FindReflClass(corlib, "System.Reflection", "ParameterInfo");
+    if (parC) {
+        FindReflMethod(
+            parC,
+            "get_Attributes",
+            "System.Reflection.ParameterAttributes",
+            {},
+            &refl.ParameterInfo.get_Attributes
+        );
+        FindReflMethod(
+            parC,
+            "get_DefaultValue",
+            "System.Object",
+            {},
+            &refl.ParameterInfo.get_DefaultValue
+        );
+        FindReflMethod(
+            parC,
+            "get_Name",
+            "System.String",
+            {},
+            &refl.ParameterInfo.get_Name
+        );
+        FindReflMethod(
+            parC,
+            "get_ParameterType",
+            "System.Type",
+            {},
+            &refl.ParameterInfo.get_Type
+        );
+    }
+
+    Class* arrC = FindReflClass(corlib, "System", "Array");
+    if (arrC) {
+        FindReflMethod(
+            arrC,
+            "GetValue",
+            "System.Object",
+            {"System.Int32"},
+            &refl.Array.GetValue
+        );
+    }
+
+    Class* iColl = FindReflClass(corlib, "System.Collections", "ICollection");
+    if (iColl) {
+        FindReflMethod(
+            iColl,
+            "get_Count",
+            "System.Int32",
+            {},
+            &refl.ICollection.get_Count
+        );
+    }
+    
+    refl.IList.klass = FindReflClass(corlib, "System.Collections", "IList");
+    if (refl.IList.klass) {
+        FindReflMethod(
+            refl.IList.klass,
+            "get_Item",
+            "System.Object",
+            {"System.Int32"},
+            &refl.IList.get_Item
+        );
+    }
+
+    InitUnityReflection();
+}
+
+void InitReflectionAtt(Image* corlib) {
+    Class* customAttC = FindReflClass(corlib, "System.Reflection", "CustomAttributeData");
+    if (customAttC) {
+        FindReflMethod(
+            customAttC,
+            "GetCustomAttributes",
+            "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
+            {"System.Reflection.MemberInfo"},
+            &refl.CustomAttributeData.GetCustomAttributesM,
+            "(M)"
+        );
+
+        FindReflMethod(
+            customAttC,
+            "GetCustomAttributes",
+            "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
+            {"System.Reflection.ParameterInfo"},
+            &refl.CustomAttributeData.GetCustomAttributesP,
+            "(P)"
+        );
+
+        FindReflMethod(
+            customAttC,
+            "get_AttributeType",
+            "System.Type",
+            {},
+            &refl.CustomAttributeData.get_AttributeType
+        );
+
+        FindReflMethod(
+            customAttC,
+            "get_ConstructorArguments",
+            "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>",
+            {},
+            &refl.CustomAttributeData.get_ConstructorArguments
+        );
+
+        FindReflMethod(
+            customAttC,
+            "get_NamedArguments",
+            "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>",
+            {},
+            &refl.CustomAttributeData.get_NamedArguments
+        );
+    }
+
+    refl.CustomAttributeTypedArgument.klass = FindReflClass(
+        corlib,
+        "System.Reflection",
+        "CustomAttributeTypedArgument"
+    );
+    if (refl.CustomAttributeTypedArgument.klass) {
+        FindReflMethod(
+            refl.CustomAttributeTypedArgument.klass,
+            "get_Value",
+            "System.Object",
+            {},
+            &refl.CustomAttributeTypedArgument.get_Value
+        );
+    }
+
+    Class* namedArgC = FindReflClass(
+        corlib,
+        "System.Reflection",
+        "CustomAttributeNamedArgument"
+    );
+    if (namedArgC) {
+        FindReflMethod(
+            namedArgC,
+            "get_MemberName",
+            "System.String",
+            {},
+            &refl.CustomAttributeNamedArgument.get_MemberName
+        );
+
+        FindReflMethod(
+            namedArgC,
+            "get_TypedValue",
+            "System.Reflection.CustomAttributeTypedArgument",
+            {},
+            &refl.CustomAttributeNamedArgument.get_TypedValue
+        );
+    }
 }
 
 std::unique_ptr<ApiResolver> GetApiResolver(const fs::path& extDir) {
@@ -1414,7 +1281,7 @@ void RunDumper() {
 
     Image* corlib = Image::GetCorlib();
     if (!corlib) {
-        Log::Error("cannot obtain mscorlib.dll");
+        Log::Error("cannot obtain corlib");
     } else {
         Log::Debug("corlib: 0x{:X}", (uintptr_t) corlib);
 
@@ -1422,9 +1289,9 @@ void RunDumper() {
         InitReflectionAtt(corlib);
     }
 
-    if (getUnityVer) {
-        auto verS = (String*) getUnityVer->Invoke(nullptr);
-        auto ver = verS ? U16ToU8(verS->GetChars()) : "null";
+    if (refl.UnityEngine.get_unityVersion) {
+        auto verO = (String*) refl.UnityEngine.get_unityVersion->Invoke(nullptr);
+        auto ver = verO ? StrUtil::U16ToU8(verO->GetChars()) : "null";
         Log::Debug("unity version: {}", ver);
     }
 

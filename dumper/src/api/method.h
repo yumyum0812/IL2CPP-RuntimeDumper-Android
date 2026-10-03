@@ -10,25 +10,25 @@ namespace Api {
         Method() = delete;
 
         std::string GetName() {
-            auto s = Functions::il2cpp_method_get_name(this);
+            auto s = Functions::method_get_name(this);
             return {s ? s : ""};
         }
 
         Type* GetReturnType() {
-            return Functions::il2cpp_method_get_return_type(this);
+            return Functions::method_get_return_type(this);
         }
 
         size_t GetParamCount() {
-            return Functions::il2cpp_method_get_param_count(this);
+            return Functions::method_get_param_count(this);
         }
         
         std::string GetParamName(size_t index) {
-            auto s = Functions::il2cpp_method_get_param_name(this, index);
+            auto s = Functions::method_get_param_name(this, index);
             return {s ? s : ""};
         }
 
         Type* GetParam(size_t index) {
-            return Functions::il2cpp_method_get_param(this, index);
+            return Functions::method_get_param(this, index);
         }
 
         void* GetPointer() {
@@ -36,15 +36,15 @@ namespace Api {
         }
 
         bool IsGeneric() {
-            return Functions::il2cpp_method_is_generic(this);
+            return Functions::method_is_generic(this);
         }
 
         bool IsInflated() {
-            return Functions::il2cpp_method_is_inflated(this);
+            return Functions::method_is_inflated(this);
         }
 
         int GetFlags() {
-            return Functions::il2cpp_method_get_flags(this, nullptr);
+            return Functions::method_get_flags(this, nullptr);
         }
 
         template<typename... A>
@@ -64,7 +64,7 @@ namespace Api {
             }
 
             Object* exc = nullptr;
-            return Functions::il2cpp_runtime_invoke(this, obj, paramArray, &exc);
+            return Functions::runtime_invoke(this, obj, paramArray, &exc);
         }
 
         template <typename T, typename... A>
@@ -73,11 +73,11 @@ namespace Api {
         }
 
         Object* GetObject() {
-            return Functions::il2cpp_method_get_object(this);
+            return Functions::method_get_object(this);
         }
 
         Class* GetClass() {
-            return Functions::il2cpp_method_get_class(this);
+            return Functions::method_get_class(this);
         }
     };
 }

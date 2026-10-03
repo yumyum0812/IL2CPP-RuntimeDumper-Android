@@ -9,11 +9,11 @@ namespace Api {
         Thread() = delete;
         
         static Thread* Attach(Domain* domain) {
-            return Functions::il2cpp_thread_attach(domain);
+            return Functions::thread_attach(domain);
         }
 
         void Detach() {
-            return Functions::il2cpp_thread_detach(this);
+            return Functions::thread_detach(this);
         }
     };
 }
