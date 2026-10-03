@@ -171,26 +171,28 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
 
     if (refl.Array.GetValue && refl.Type.GetGenericArguments && (isGeneric || isInflated)) {
         auto to = t->GetObject();
-        auto getGensV = to->GetVirtualMethod(refl.Type.GetGenericArguments);
-        if (getGensV) {
-            auto args = (Array*) getGensV->Invoke(to);
-            if (args) {
-                std::string pureName = StrUtil::SubBefore(name, "`");
+        if (to) {
+            auto getGensV = to->GetVirtualMethod(refl.Type.GetGenericArguments);
+            if (getGensV) {
+                auto args = (Array*) getGensV->Invoke(to);
+                if (args) {
+                    std::string pureName = StrUtil::SubBefore(name, "`");
 
-                int len = args->GetLength();
+                    int len = args->GetLength();
 
-                if (!isInflated && forTypeof)
-                    return StrUtil::SubBefore(name, "`") + "<" + StrUtil::Repeat(",", len - 1) +  ">";
+                    if (!isInflated && forTypeof)
+                        return StrUtil::SubBefore(name, "`") + "<" + StrUtil::Repeat(",", len - 1) +  ">";
 
-                std::vector<std::string> ps;
-                for (int i = 0; i < len; i++) {
-                    auto p = refl.Array.GetValue->Invoke(args, i);
-                    auto pt = Class::FromSystemType(p);
-                    auto ptC = pt->GetType();
-                    ps.push_back(FormatTypeName(ptC, forDefinition));
+                    std::vector<std::string> ps;
+                    for (int i = 0; i < len; i++) {
+                        auto p = refl.Array.GetValue->Invoke(args, i);
+                        auto pt = Class::FromSystemType(p);
+                        auto ptC = pt->GetType();
+                        ps.push_back(FormatTypeName(ptC, forDefinition));
+                    }
+                    
+                    return pureName + "<" + StrUtil::Join(ps, ", ") + ">";
                 }
-                
-                return pureName + "<" + StrUtil::Join(ps, ", ") + ">";
             }
         }
     }
@@ -470,7 +472,10 @@ std::string FormatObject(Object* obj) {
         return "null";
 
     auto klass = obj->GetClass();
+    if (!klass) return "?";
+
     auto type = klass->GetType();
+    if (!type) return "?";
 
     if (refl.Type.klass && refl.Type.klass->IsAssignableFrom(klass)) {
         auto tName = Class::FromSystemType(obj)->GetType();
@@ -894,6 +899,8 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         
         if ((isInflated || isGeneric) && refl.Array.GetValue && refl.MethodBase.GetGenericArguments) [&]{
             auto to = m->GetObject();
+            if (!to) return;
+
             auto getGensV = to->GetVirtualMethod(refl.MethodBase.GetGenericArguments);
             if (!getGensV) return;
 
@@ -1309,6 +1316,7 @@ void RunDumper() {
         InitReflection(corlib);
         InitReflectionAtt(corlib);
     }
+    Log::Debug("initialized reflection methods");
 
     if (refl.UnityEngine.get_unityVersion) {
         auto verO = (String*) refl.UnityEngine.get_unityVersion->Invoke(nullptr);
