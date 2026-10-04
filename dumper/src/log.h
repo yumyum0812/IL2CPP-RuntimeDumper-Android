@@ -31,6 +31,8 @@ namespace Log {
     
     template<typename... Args>
     inline void _Print(int priority, std::format_string<Args...> fmt, std::string_view modeTag, Args&&... args) {
+        std::lock_guard lock(_mtx);
+        
         std::string msg = std::format(fmt, std::forward<Args>(args)...);
         __android_log_write(priority, TAG, msg.c_str());
 
