@@ -48,7 +48,7 @@ namespace Api {
         }
 
         template<typename... A>
-        Object* Invoke(void* obj, A&... args) {
+        Object* Invoke(void* obj, A&&... args) {
             constexpr std::size_t argCount = sizeof...(A);
             void* paramArray[argCount > 0 ? argCount : 1] = { nullptr };
 
@@ -72,8 +72,8 @@ namespace Api {
             return reinterpret_cast<T(*)(A..., Method*)>(methodPtr)(std::forward<A>(args)..., nullptr);
         }
 
-        Object* GetObject() {
-            return Functions::method_get_object(this);
+        Object* GetObject(Class* refClass = nullptr) {
+            return Functions::method_get_object(this, refClass);
         }
 
         Class* GetClass() {

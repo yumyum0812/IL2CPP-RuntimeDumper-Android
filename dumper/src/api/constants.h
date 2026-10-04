@@ -1,43 +1,43 @@
 namespace Api {
     namespace TypeEnum {
-        constexpr int END        = 0x00;
-        constexpr int VOID       = 0x01;
-        constexpr int BOOLEAN    = 0x02;
-        constexpr int CHAR       = 0x03;
-        constexpr int I1         = 0x04;
-        constexpr int U1         = 0x05;
-        constexpr int I2         = 0x06;
-        constexpr int U2         = 0x07;
-        constexpr int I4         = 0x08;
-        constexpr int U4         = 0x09;
-        constexpr int I8         = 0x0a;
-        constexpr int U8         = 0x0b;
-        constexpr int R4         = 0x0c;
-        constexpr int R8         = 0x0d;
-        constexpr int STRING     = 0x0e;
-        constexpr int PTR        = 0x0f;
-        constexpr int BYREF      = 0x10;
-        constexpr int VALUETYPE  = 0x11;
-        constexpr int CLASS      = 0x12;
-        constexpr int VAR        = 0x13;
-        constexpr int ARRAY      = 0x14;
-        constexpr int GENERICINST= 0x15;
-        constexpr int TYPEDBYREF = 0x16;
-        constexpr int I          = 0x18;
-        constexpr int U          = 0x19;
-        constexpr int FNPTR      = 0x1b;
-        constexpr int OBJECT     = 0x1c;
-        constexpr int SZARRAY    = 0x1d;
-        constexpr int MVAR       = 0x1e;
-        constexpr int CMOD_REQD  = 0x1f;
-        constexpr int CMOD_OPT   = 0x20;
-        constexpr int INTERNAL   = 0x21;
+        constexpr int END         = 0x00;
+        constexpr int VOID        = 0x01;
+        constexpr int BOOLEAN     = 0x02;
+        constexpr int CHAR        = 0x03;
+        constexpr int I1          = 0x04;
+        constexpr int U1          = 0x05;
+        constexpr int I2          = 0x06;
+        constexpr int U2          = 0x07;
+        constexpr int I4          = 0x08;
+        constexpr int U4          = 0x09;
+        constexpr int I8          = 0x0a;
+        constexpr int U8          = 0x0b;
+        constexpr int R4          = 0x0c;
+        constexpr int R8          = 0x0d;
+        constexpr int STRING      = 0x0e;
+        constexpr int PTR         = 0x0f;
+        constexpr int BYREF       = 0x10;
+        constexpr int VALUETYPE   = 0x11;
+        constexpr int CLASS       = 0x12;
+        constexpr int VAR         = 0x13;
+        constexpr int ARRAY       = 0x14;
+        constexpr int GENERICINST = 0x15;
+        constexpr int TYPEDBYREF  = 0x16;
+        constexpr int I           = 0x18;
+        constexpr int U           = 0x19;
+        constexpr int FNPTR       = 0x1b;
+        constexpr int OBJECT      = 0x1c;
+        constexpr int SZARRAY     = 0x1d;
+        constexpr int MVAR        = 0x1e;
+        constexpr int CMOD_REQD   = 0x1f;
+        constexpr int CMOD_OPT    = 0x20;
+        constexpr int INTERNAL    = 0x21;
 
-        constexpr int MODIFIER   = 0x40;
-        constexpr int SENTINEL   = 0x41;
-        constexpr int PINNED     = 0x45;
+        constexpr int MODIFIER    = 0x40;
+        constexpr int SENTINEL    = 0x41;
+        constexpr int PINNED      = 0x45;
 
-        constexpr int ENUM       = 0x55;
+        constexpr int ENUM        = 0x55;
     };
 
     namespace FieldAttributes {
@@ -66,30 +66,30 @@ namespace Api {
     };
 
     namespace MethodAttributes {
-        constexpr int MEMBER_ACCESS_MASK       = 0x0007;
-        constexpr int COMPILER_CONTROLLED      = 0x0000;
-        constexpr int PRIVATE                  = 0x0001;
-        constexpr int FAM_AND_ASSEM            = 0x0002;
-        constexpr int ASSEM                    = 0x0003;
-        constexpr int FAMILY                   = 0x0004;
-        constexpr int FAM_OR_ASSEM             = 0x0005;
-        constexpr int PUBLIC                   = 0x0006;
+        constexpr int MEMBER_ACCESS_MASK  = 0x0007;
+        constexpr int COMPILER_CONTROLLED = 0x0000;
+        constexpr int PRIVATE             = 0x0001;
+        constexpr int FAM_AND_ASSEM       = 0x0002;
+        constexpr int ASSEM               = 0x0003;
+        constexpr int FAMILY              = 0x0004;
+        constexpr int FAM_OR_ASSEM        = 0x0005;
+        constexpr int PUBLIC              = 0x0006;
 
-        constexpr int STATIC                   = 0x0010;
-        constexpr int FINAL                    = 0x0020;
-        constexpr int VIRTUAL                  = 0x0040;
-        constexpr int HIDE_BY_SIG              = 0x0080;
+        constexpr int STATIC              = 0x0010;
+        constexpr int FINAL               = 0x0020;
+        constexpr int VIRTUAL             = 0x0040;
+        constexpr int HIDE_BY_SIG         = 0x0080;
 
-        constexpr int VTABLE_LAYOUT_MASK       = 0x0100;
-        constexpr int REUSE_SLOT               = 0x0000;
-        constexpr int NEW_SLOT                 = 0x0100;
+        constexpr int VTABLE_LAYOUT_MASK  = 0x0100;
+        constexpr int REUSE_SLOT          = 0x0000;
+        constexpr int NEW_SLOT            = 0x0100;
 
-        constexpr int STRICT                   = 0x0200;
-        constexpr int ABSTRACT                 = 0x0400;
-        constexpr int SPECIAL_NAME             = 0x0800;
+        constexpr int STRICT              = 0x0200;
+        constexpr int ABSTRACT            = 0x0400;
+        constexpr int SPECIAL_NAME        = 0x0800;
 
-        constexpr int PINVOKE_IMPL             = 0x2000;
-        constexpr int UNMANAGED_EXPORT         = 0x0008;
+        constexpr int PINVOKE_IMPL        = 0x2000;
+        constexpr int UNMANAGED_EXPORT    = 0x0008;
     };
 
     namespace TypeAttributes {
@@ -141,4 +141,28 @@ namespace Api {
         constexpr int HAS_FIELD_MARSHAL = 0x2000;
         constexpr int UNUSED            = 0xcfe0;
     };
+
+    namespace BindingFlags {
+        constexpr int DEFAULT                = 0;
+        constexpr int IGNORE_CASE            = 0x0000001;
+        constexpr int DECLARED_ONLY          = 0x0000002;
+        constexpr int INSTANCE               = 0x0000004;
+        constexpr int STATIC                 = 0x0000008;
+        constexpr int PUBLIC                 = 0x0000010;
+        constexpr int NON_PUBLIC             = 0x0000020;
+        constexpr int FLATTEN_HIERARCHY      = 0x0000040;
+        constexpr int INVOKE_METHOD          = 0x0000100;
+        constexpr int CREATE_INSTANCE        = 0x0000200;
+        constexpr int GET_FIELD              = 0x0000400;
+        constexpr int SET_FIELD              = 0x0000800;
+        constexpr int GET_PROPERTY           = 0x0001000;
+        constexpr int SET_PROPERTY           = 0x0002000;
+        constexpr int PUT_DISP_PROPERTY      = 0x0004000;
+        constexpr int PUT_REF_DISP_PROPERTY  = 0x0008000;
+        constexpr int EXACT_BINDING          = 0x0010000;
+        constexpr int SUPPRESS_CHANGE_TYPE   = 0x0020000;
+        constexpr int OPTIONAL_PARAM_BINDING = 0x0040000;
+        constexpr int IGNORE_RETURN          = 0x1000000;
+        constexpr int DO_NOT_WRAP_EXCEPTIONS = 0x2000000;
+    }
 }

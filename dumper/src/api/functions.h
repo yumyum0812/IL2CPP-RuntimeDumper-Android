@@ -123,7 +123,7 @@ public:
     _API_FUNC(method_get_flags, int(Method* method, uint32_t* iflags));
     _API_FUNC(method_is_generic, bool(Method* method));
     _API_FUNC(method_is_inflated, bool(Method* method));
-    _API_FUNC(method_get_object, Object*(Method* method));
+    _API_FUNC(method_get_object, Object*(Method* method, Class* refClass));
 
     _API_FUNC(type_get_name, const char*(Type* typ));
     _API_FUNC(type_get_type, int(Type* typ));

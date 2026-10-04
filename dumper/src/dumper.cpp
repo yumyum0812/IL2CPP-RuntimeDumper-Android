@@ -91,6 +91,9 @@ struct {
         Method* GetParameters{};
     } MethodBase;
     struct {
+        Method* get_Name{};
+    } MemberInfo;
+    struct {
         Method* GetCustomAttributesM{};
         Method* GetCustomAttributesP{};
         Method* get_AttributeType{};
@@ -99,6 +102,7 @@ struct {
     } CustomAttributeData;
     struct {
         Method* get_MemberName{};
+        Method* get_MemberInfo{};
         Method* get_TypedValue{};
     } CustomAttributeNamedArgument;
     struct {
@@ -369,42 +373,36 @@ std::string FormatParamType(Type* typ) {
     return out;
 }
 
-std::vector<Object*> ObjListToVector(Object* obj, std::string_view tName = "") {
+void ObjListToVector(Object* obj, std::string_view tName, std::function<void(Object* v)> iter) {
     Class* klass = obj->GetClass();
 
     Method* vGetCount = Finder::FindMethodI(klass, "get_Count", "System.Int32", {});
-    if (!vGetCount) return {};
+    if (!vGetCount) return;
 
     Method* vGetItem = Finder::FindMethodI(klass, "get_Item", tName, {"System.Int32"});
-    if (!vGetItem) return {};
+    if (!vGetItem) return;
 
     vGetCount = obj->GetVirtualMethod(vGetCount);
     vGetItem = obj->GetVirtualMethod(vGetItem);
 
     if (!vGetCount) {
         Log::Warn("get_Count is null for {}", FormatTypeName(klass->GetType()));
-        return {};
+        return;
     }
     if (!vGetItem) {
         Log::Warn("get_Item is null for {}", FormatTypeName(klass->GetType()));
-        return {};
+        return;
     }
 
     Object* countBox = vGetCount->Invoke(obj);
     if (!countBox)
-        return {};
+        return;
 
     int count = *(int*) countBox->Unbox();
-
-    std::vector<Object*> vec;
-    vec.reserve(count);
-
     for (int i = 0; i < count; i++) {
         Object* v = vGetItem->Invoke(obj, i);
-        vec.push_back(v);
+        iter(v);
     }
-
-    return vec;
 }
 
 template <typename Getter>
@@ -560,28 +558,35 @@ std::string FormatAttrTyped(Object* typed) {
     return FormatObject(v);
 }
 
+bool CanDoAttr() {
+    return refl.CustomAttributeData.get_AttributeType &&
+        refl.CustomAttributeData.get_ConstructorArguments &&
+        refl.CustomAttributeData.get_NamedArguments &&
+        refl.CustomAttributeTypedArgument.get_Value &&
+        refl.CustomAttributeNamedArgument.get_TypedValue &&
+        (refl.CustomAttributeNamedArgument.get_MemberName || (refl.CustomAttributeNamedArgument.get_MemberInfo && refl.MemberInfo.get_Name));
+}
+
 void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
-    auto attrsV = ObjListToVector(attrs, "System.Reflection.CustomAttributeData");
-    for (Object* attr : attrsV) {
-        if (!attr) continue;
+    if (!CanDoAttr()) return;
+
+    ObjListToVector(attrs, "System.Reflection.CustomAttributeData", [&] (Object* attr) {
+        if (!attr) return;
 
         Object* attrTO = refl.CustomAttributeData.get_AttributeType->Invoke(attr);
-        if (!attrTO) continue;
+        if (!attrTO) return;
 
         auto attrC = Class::FromSystemType(attrTO);
-        if (!attrC) continue;
+        if (!attrC) return;
         
         auto attrNs = attrC->GetNamespace();
         auto attrTypeName = attrC->GetName();
 
-        bool skip = false;
-        for (auto [ns, n] : excludes) {
-            if (ns == attrNs && n == attrTypeName) {
-                skip = true;
-                break;
-            }
+        if (std::ranges::any_of(excludes, [&](const auto& e) {
+            return e.first == attrNs && e.second == attrTypeName;
+        })) {
+            return;
         }
-        if (skip) break;
 
         StrUtil::EraseSuffix(attrTypeName, "Attribute");
 
@@ -590,29 +595,40 @@ void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vecto
         out << attrTypeName;
 
         Object* constrsO = refl.CustomAttributeData.get_ConstructorArguments->Invoke(attr);
-        if (!constrsO) continue;
-
         Object* namedsO = refl.CustomAttributeData.get_NamedArguments->Invoke(attr);
-        if (!namedsO) continue;
-
-        auto constrs = ObjListToVector(constrsO, "System.Reflection.CustomAttributeTypedArgument");
-        auto nameds = ObjListToVector(namedsO, "System.Reflection.CustomAttributeNamedArgument");
 
         std::vector<std::string> argStrs;
-        for (Object* typed : constrs) {
-            argStrs.push_back(FormatAttrTyped(typed));
+        if (constrsO) {
+            ObjListToVector(constrsO, "System.Reflection.CustomAttributeTypedArgument", [&] (Object* typed) {
+                argStrs.push_back(FormatAttrTyped(typed));
+            });
         }
-        for (Object* named : nameds) {
-            if (!named) continue;
+        if (namedsO) {
+            ObjListToVector(namedsO, "System.Reflection.CustomAttributeNamedArgument", [&] (Object* named) {
+                if (!named) return;
 
-            void* namedUnbox = named->Unbox();
-            if (!namedUnbox) continue;
+                void* namedUnbox = named->Unbox();
+                if (!namedUnbox) return;
 
-            String* memberNameS = (String*) refl.CustomAttributeNamedArgument.get_MemberName->Invoke(namedUnbox);
-            auto memberName = memberNameS ? StrUtil::U16ToU8(memberNameS->GetChars()) : "?";
+                String* memberNameS = [&]() -> String* {
+                    if (refl.CustomAttributeNamedArgument.get_MemberName) {
+                        return (String*) refl.CustomAttributeNamedArgument.get_MemberName->Invoke(namedUnbox);
+                    }
 
-            Object* typed = refl.CustomAttributeNamedArgument.get_TypedValue->Invoke(namedUnbox);
-            argStrs.push_back(memberName + " = " + FormatAttrTyped(typed));
+                    Object* info = refl.CustomAttributeNamedArgument.get_MemberInfo->Invoke(namedUnbox);
+                    if (!info) return nullptr;
+
+                    Method* vGetName = info->GetVirtualMethod(refl.MemberInfo.get_Name);
+                    if (!vGetName) return nullptr;
+
+                    return (String*) vGetName->Invoke(info);
+                }();
+
+                auto memberName = memberNameS ? StrUtil::U16ToU8(memberNameS->GetChars()) : "?";
+
+                Object* typed = refl.CustomAttributeNamedArgument.get_TypedValue->Invoke(namedUnbox);
+                argStrs.push_back(memberName + " = " + FormatAttrTyped(typed));
+            });
         }
 
         if (!argStrs.empty()) {
@@ -622,20 +638,14 @@ void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vecto
         }
         out << "]";
         out << (nl ? "\n" : " ");
-    }
+    });
 }
 
 void DoMemberForAttr(Object* memberInfo, std::ostream& out, int ind = 1) {
     if (!memberInfo) return;
+    if (!CanDoAttr()) return;
 
-    if (!refl.CustomAttributeData.GetCustomAttributesM ||
-        !refl.CustomAttributeData.get_AttributeType ||
-        !refl.CustomAttributeData.get_ConstructorArguments ||
-        !refl.CustomAttributeData.get_NamedArguments ||
-        !refl.CustomAttributeTypedArgument.get_Value ||
-        !refl.CustomAttributeNamedArgument.get_TypedValue ||
-        !refl.CustomAttributeNamedArgument.get_MemberName
-    ) return;
+    if (!refl.CustomAttributeData.GetCustomAttributesM) return;
 
     Object* attrs = refl.CustomAttributeData.GetCustomAttributesM->Invoke(nullptr, memberInfo);
     if (!attrs) return;
@@ -645,6 +655,7 @@ void DoMemberForAttr(Object* memberInfo, std::ostream& out, int ind = 1) {
 
 void DoParamAttr(Object* paramInfo, std::ostream& out, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
     if (!paramInfo) return;
+    if (!CanDoAttr()) return;
 
     Object* attrs = refl.CustomAttributeData.GetCustomAttributesP->Invoke(nullptr, paramInfo);
     if (!attrs) return;
@@ -753,7 +764,7 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             auto vGetProperty = tO->GetVirtualMethod(refl.Type.GetProperty);
             if (!vGetProperty) return;
 
-            auto pO = vGetProperty->Invoke(tO, pNameO);
+            auto pO = vGetProperty->Invoke(tO, pNameO, BindingFlags::DECLARED_ONLY);
             DoMemberForAttr(pO, out);
         }();
 
@@ -780,6 +791,9 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         bool isGeneric = m->IsGeneric();
         bool isInflated = m->IsInflated();
         bool isAbstract = (m->GetFlags() & MethodAttributes::ABSTRACT) != 0;
+
+        if (!mObj) continue;
+        if (!mRT) continue;
 
         std::vector<std::string> parFmts;
 
@@ -1001,7 +1015,7 @@ void InitReflection(Image* corlib) {
             refl.Type.klass,
             "GetProperty",
             "System.Reflection.PropertyInfo",
-            {"System.String"},
+            {"System.String", "System.Reflection.BindingFlags"},
             &refl.Type.GetProperty
         );
     }
@@ -1089,6 +1103,17 @@ void InitReflection(Image* corlib) {
         );
     }
 
+    Class* memberInfoC = FindReflClass(corlib, "System.Reflection", "MemberInfo");
+    if (memberInfoC) {
+        FindReflMethod(
+            memberInfoC,
+            "get_Name",
+            "System.String",
+            {},
+            &refl.MemberInfo.get_Name
+        );
+    }
+
     InitUnityReflection();
 }
 
@@ -1165,6 +1190,14 @@ void InitReflectionAtt(Image* corlib) {
             "System.String",
             {},
             &refl.CustomAttributeNamedArgument.get_MemberName
+        );
+
+        FindReflMethod(
+            namedArgC,
+            "get_MemberInfo",
+            "System.Reflection.MemberInfo",
+            {},
+            &refl.CustomAttributeNamedArgument.get_MemberInfo
         );
 
         FindReflMethod(
@@ -1253,8 +1286,11 @@ std::unique_ptr<ApiResolver> GetApiResolver(const fs::path& extDir) {
 void RunDumper() {
     using namespace Api;
 
+    Log::Debug("sleeping...");
+
+    std::this_thread::sleep_for(std::chrono::seconds(4));
+
     Log::Debug("running...");
-    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     auto extDirS = GetAppExtDir();
     if (extDirS.empty()) {
