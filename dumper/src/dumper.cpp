@@ -1283,6 +1283,59 @@ std::unique_ptr<ApiResolver> GetApiResolver(const fs::path& extDir) {
     return std::make_unique<SymApiResolver>();
 }
 
+
+std::map<uintptr_t, uintptr_t> GetStaticWriteMap(const fs::path& extDir) {
+    auto mapFileP = extDir / "static_write_map.txt";
+
+    if (fs::exists(mapFileP)) {
+        std::map<uintptr_t, uintptr_t> out;
+        Log::Debug("static_write_map.txt found");
+
+        std::ifstream mapF(mapFileP);
+
+        std::string line;
+        while (std::getline(mapF, line)) {
+            std::istringstream ss(line);
+
+            std::string key;
+            std::string value;
+            ss >> key >> value;
+
+            if (key.empty()) {
+                Log::Debug("key is empty");
+                continue;
+            }
+            if (value.empty()) {
+                Log::Debug("value is empty");
+                continue;
+            }
+
+            size_t offset = 0;
+            try {
+                offset = static_cast<size_t>(std::stoull(key, nullptr, 16));
+            } catch (const std::exception& e) {
+                Log::Debug("invalid write offset: {}", key);
+                return {};
+            }
+
+            uintptr_t val = 0;
+            try {
+                val = static_cast<size_t>(std::stoull(value, nullptr, 16));
+            } catch (const std::exception& e) {
+                Log::Debug("invalid write value for 0x{:X}: {}", offset, value);
+                return {};
+            }
+
+            out[offset] = val;
+        }
+
+        Log::Debug("loaded {:d} write offsets", out.size());
+        return out;
+    }
+    return {};
+}
+
+
 void RunDumper() {
     using namespace Api;
 
@@ -1318,6 +1371,7 @@ void RunDumper() {
 
     auto libRes = LibResolver();
     auto res = GetApiResolver(extDir);
+    auto staticWriteMap = GetStaticWriteMap(extDir);
 
     if (!res) {
         Log::Error("cannot create api resolver");
@@ -1331,6 +1385,12 @@ void RunDumper() {
     }
 
     libBase = libRes.GetBaseAddress();
+
+    for (auto [offset, value] : staticWriteMap) {
+        Log::Debug("writing offset 0x{:X}: 0x{:X}", offset, value);
+        *(uintptr_t*)(libBase + offset) = value;
+        Log::Debug("wrote value to offset 0x{:X}", offset);
+    }
 
     Domain* dmn = Domain::GetInstance();
     if (!dmn) {
