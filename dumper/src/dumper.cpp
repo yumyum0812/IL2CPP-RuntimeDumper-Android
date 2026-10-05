@@ -1,12 +1,14 @@
 #include <chrono>
 #include <concepts>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <ostream>
 #include <sstream>
 #include <unordered_map>
+#include <dobby.h>
 
 #include "api/functions.h"
 #include "api/object.h"
@@ -27,14 +29,18 @@
 #include "utils/str_util.h"
 #include "resolver.h"
 #include "log.h"
-#include "finder.h"
 #include "formats.h"
+#include "reflection_methods.h"
+#include "reflection_initer.h"
+#include "iteration_helper.h"
+#include "config.h"
 
 using namespace Api;
+using namespace ReflectionMethods;
 namespace fs = std::filesystem;
 
-
 constexpr auto INDENT = "    ";
+
 
 const std::unordered_map<int, std::string> typeAliases = {
     {TypeEnum::VOID, "void"},
@@ -63,59 +69,12 @@ const std::unordered_map<int, std::string> typeSuffixes = {
 };
 
 
+Config config;
+std::filesystem::path outDir;
+LibResolver libRes;
+
 uintptr_t libBase = 0;
 size_t structBoxSize = 0;
-
-struct {
-    struct {
-        Method* get_unityVersion{};
-    } UnityEngine;
-    struct {
-        Method* GetValue;
-    } Array;
-    struct {
-        Method* get_Count{};
-    } ICollection;
-    struct {
-        Class* klass{};
-        Method* get_Item{};
-    } IList;
-    struct {
-        Class* klass{};
-        Method* GetGenericArguments{};
-        Method* GetField{};
-        Method* GetProperty{};
-    } Type;
-    struct {
-        Method* GetGenericArguments{};
-        Method* GetParameters{};
-    } MethodBase;
-    struct {
-        Method* get_Name{};
-    } MemberInfo;
-    struct {
-        Method* GetCustomAttributesM{};
-        Method* GetCustomAttributesP{};
-        Method* get_AttributeType{};
-        Method* get_ConstructorArguments{};
-        Method* get_NamedArguments{};
-    } CustomAttributeData;
-    struct {
-        Method* get_MemberName{};
-        Method* get_MemberInfo{};
-        Method* get_TypedValue{};
-    } CustomAttributeNamedArgument;
-    struct {
-        Class* klass{};
-        Method* get_Value{};
-    } CustomAttributeTypedArgument;
-    struct ParameterInfo {
-        Method* get_Attributes{};
-        Method* get_Name{};
-        Method* get_Type{};
-        Method* get_DefaultValue{};
-    } ParameterInfo;
-} refl;
 
 
 std::string GetAppExtDir() {
@@ -173,10 +132,10 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
     auto isGeneric = klass->IsGeneric();
     auto isInflated = klass->IsInflated();
 
-    if (refl.Array.GetValue && refl.Type.GetGenericArguments && (isGeneric || isInflated)) {
+    if (C_Array.GetValue && C_Type.GetGenericArguments && (isGeneric || isInflated)) {
         auto to = t->GetObject();
         if (to) {
-            auto getGensV = to->GetVirtualMethod(refl.Type.GetGenericArguments);
+            auto getGensV = to->GetVirtualMethod(C_Type.GetGenericArguments);
             if (getGensV) {
                 auto args = (Array*) getGensV->Invoke(to);
                 if (args) {
@@ -189,7 +148,7 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
 
                     std::vector<std::string> ps;
                     for (int i = 0; i < len; i++) {
-                        auto p = refl.Array.GetValue->Invoke(args, i);
+                        auto p = C_Array.GetValue->Invoke(args, i);
                         auto pt = Class::FromSystemType(p);
                         auto ptC = pt->GetType();
                         ps.push_back(FormatTypeName(ptC, forDefinition));
@@ -373,37 +332,7 @@ std::string FormatParamType(Type* typ) {
     return out;
 }
 
-void ObjListToVector(Object* obj, std::string_view tName, std::function<void(Object* v)> iter) {
-    Class* klass = obj->GetClass();
 
-    Method* vGetCount = Finder::FindMethodI(klass, "get_Count", "System.Int32", {});
-    if (!vGetCount) return;
-
-    Method* vGetItem = Finder::FindMethodI(klass, "get_Item", tName, {"System.Int32"});
-    if (!vGetItem) return;
-
-    vGetCount = obj->GetVirtualMethod(vGetCount);
-    vGetItem = obj->GetVirtualMethod(vGetItem);
-
-    if (!vGetCount) {
-        Log::Warn("get_Count is null for {}", FormatTypeName(klass->GetType()));
-        return;
-    }
-    if (!vGetItem) {
-        Log::Warn("get_Item is null for {}", FormatTypeName(klass->GetType()));
-        return;
-    }
-
-    Object* countBox = vGetCount->Invoke(obj);
-    if (!countBox)
-        return;
-
-    int count = *(int*) countBox->Unbox();
-    for (int i = 0; i < count; i++) {
-        Object* v = vGetItem->Invoke(obj, i);
-        iter(v);
-    }
-}
 
 template <typename Getter>
 std::string FormatObjectCustom(int typeEnum, Getter&& getter) {
@@ -475,7 +404,7 @@ std::string FormatObject(Object* obj) {
     auto type = klass->GetType();
     if (!type) return "?";
 
-    if (refl.Type.klass && refl.Type.klass->IsAssignableFrom(klass)) {
+    if (C_Type.klass && C_Type.klass->IsAssignableFrom(klass)) {
         auto tName = Class::FromSystemType(obj)->GetType();
         return "typeof(" + FormatTypeName(tName, false, true) + ")";
     }
@@ -523,17 +452,17 @@ std::string FormatAttrTyped(Object* typed) {
     void* typedUnbox = typed->Unbox();
     if (!typedUnbox) return "?";
 
-    Object* v = refl.CustomAttributeTypedArgument.get_Value->Invoke(typedUnbox);
+    Object* v = C_CustomAttributeTypedArgument.get_Value->Invoke(typedUnbox);
     if (!v) return "null";
 
     Class* klass = v->GetClass();
     if (!klass) return "?";
 
-    if (refl.IList.klass && refl.IList.get_Item && refl.ICollection.get_Count && refl.IList.klass->IsAssignableFrom(klass)) {
-        Method* vGetItem = v->GetVirtualMethod(refl.IList.get_Item);
+    if (C_IList.klass && C_IList.get_Item && C_ICollection.get_Count && C_IList.klass->IsAssignableFrom(klass)) {
+        Method* vGetItem = v->GetVirtualMethod(C_IList.get_Item);
         if (!vGetItem) return "?";
 
-        Method* vGetCount = v->GetVirtualMethod(refl.ICollection.get_Count);
+        Method* vGetCount = v->GetVirtualMethod(C_ICollection.get_Count);
         if (!vGetCount) return "?";
 
         Object* countO = vGetCount->Invoke(v);
@@ -546,7 +475,7 @@ std::string FormatAttrTyped(Object* typed) {
             Object* vv = vGetItem->Invoke(v, i);
             Class* k = vv ? vv->GetClass() : nullptr;
             
-            if (k && refl.CustomAttributeTypedArgument.klass->IsAssignableFrom(k))
+            if (k && C_CustomAttributeTypedArgument.klass->IsAssignableFrom(k))
                 valueFmts.push_back(FormatAttrTyped(vv));
             else
                 valueFmts.push_back(FormatObject(vv));
@@ -559,21 +488,21 @@ std::string FormatAttrTyped(Object* typed) {
 }
 
 bool CanDoAttr() {
-    return refl.CustomAttributeData.get_AttributeType &&
-        refl.CustomAttributeData.get_ConstructorArguments &&
-        refl.CustomAttributeData.get_NamedArguments &&
-        refl.CustomAttributeTypedArgument.get_Value &&
-        refl.CustomAttributeNamedArgument.get_TypedValue &&
-        (refl.CustomAttributeNamedArgument.get_MemberName || (refl.CustomAttributeNamedArgument.get_MemberInfo && refl.MemberInfo.get_Name));
+    return C_CustomAttributeData.get_AttributeType &&
+        C_CustomAttributeData.get_ConstructorArguments &&
+        C_CustomAttributeData.get_NamedArguments &&
+        C_CustomAttributeTypedArgument.get_Value &&
+        C_CustomAttributeNamedArgument.get_TypedValue &&
+        (C_CustomAttributeNamedArgument.get_MemberName || (C_CustomAttributeNamedArgument.get_MemberInfo && C_MemberInfo.get_Name));
 }
 
 void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
     if (!CanDoAttr()) return;
 
-    ObjListToVector(attrs, "System.Reflection.CustomAttributeData", [&] (Object* attr) {
+    IterationHelper::IterateIList(attrs, "System.Reflection.CustomAttributeData", [&] (Object* attr) {
         if (!attr) return;
 
-        Object* attrTO = refl.CustomAttributeData.get_AttributeType->Invoke(attr);
+        Object* attrTO = C_CustomAttributeData.get_AttributeType->Invoke(attr);
         if (!attrTO) return;
 
         auto attrC = Class::FromSystemType(attrTO);
@@ -594,31 +523,31 @@ void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vecto
         out << "[";
         out << attrTypeName;
 
-        Object* constrsO = refl.CustomAttributeData.get_ConstructorArguments->Invoke(attr);
-        Object* namedsO = refl.CustomAttributeData.get_NamedArguments->Invoke(attr);
+        Object* constrsO = C_CustomAttributeData.get_ConstructorArguments->Invoke(attr);
+        Object* namedsO = C_CustomAttributeData.get_NamedArguments->Invoke(attr);
 
         std::vector<std::string> argStrs;
         if (constrsO) {
-            ObjListToVector(constrsO, "System.Reflection.CustomAttributeTypedArgument", [&] (Object* typed) {
+            IterationHelper::IterateIList(constrsO, "System.Reflection.CustomAttributeTypedArgument", [&] (Object* typed) {
                 argStrs.push_back(FormatAttrTyped(typed));
             });
         }
         if (namedsO) {
-            ObjListToVector(namedsO, "System.Reflection.CustomAttributeNamedArgument", [&] (Object* named) {
+            IterationHelper::IterateIList(namedsO, "System.Reflection.CustomAttributeNamedArgument", [&] (Object* named) {
                 if (!named) return;
 
                 void* namedUnbox = named->Unbox();
                 if (!namedUnbox) return;
 
                 String* memberNameS = [&]() -> String* {
-                    if (refl.CustomAttributeNamedArgument.get_MemberName) {
-                        return (String*) refl.CustomAttributeNamedArgument.get_MemberName->Invoke(namedUnbox);
+                    if (C_CustomAttributeNamedArgument.get_MemberName) {
+                        return (String*) C_CustomAttributeNamedArgument.get_MemberName->Invoke(namedUnbox);
                     }
 
-                    Object* info = refl.CustomAttributeNamedArgument.get_MemberInfo->Invoke(namedUnbox);
+                    Object* info = C_CustomAttributeNamedArgument.get_MemberInfo->Invoke(namedUnbox);
                     if (!info) return nullptr;
 
-                    Method* vGetName = info->GetVirtualMethod(refl.MemberInfo.get_Name);
+                    Method* vGetName = info->GetVirtualMethod(C_MemberInfo.get_Name);
                     if (!vGetName) return nullptr;
 
                     return (String*) vGetName->Invoke(info);
@@ -626,7 +555,7 @@ void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vecto
 
                 auto memberName = memberNameS ? StrUtil::U16ToU8(memberNameS->GetChars()) : "?";
 
-                Object* typed = refl.CustomAttributeNamedArgument.get_TypedValue->Invoke(namedUnbox);
+                Object* typed = C_CustomAttributeNamedArgument.get_TypedValue->Invoke(namedUnbox);
                 argStrs.push_back(memberName + " = " + FormatAttrTyped(typed));
             });
         }
@@ -645,9 +574,9 @@ void DoMemberForAttr(Object* memberInfo, std::ostream& out, int ind = 1) {
     if (!memberInfo) return;
     if (!CanDoAttr()) return;
 
-    if (!refl.CustomAttributeData.GetCustomAttributesM) return;
+    if (!C_CustomAttributeData.GetCustomAttributesM) return;
 
-    Object* attrs = refl.CustomAttributeData.GetCustomAttributesM->Invoke(nullptr, memberInfo);
+    Object* attrs = C_CustomAttributeData.GetCustomAttributesM->Invoke(nullptr, memberInfo);
     if (!attrs) return;
     
     DoAttr(attrs, out, ind, true);
@@ -657,13 +586,15 @@ void DoParamAttr(Object* paramInfo, std::ostream& out, const std::vector<std::pa
     if (!paramInfo) return;
     if (!CanDoAttr()) return;
 
-    Object* attrs = refl.CustomAttributeData.GetCustomAttributesP->Invoke(nullptr, paramInfo);
+    Object* attrs = C_CustomAttributeData.GetCustomAttributesP->Invoke(nullptr, paramInfo);
     if (!attrs) return;
 
     DoAttr(attrs, out, 0, false, excludes);
 }
 
-void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
+void DoClass(Class* klass, std::ofstream& out) {
+    if (config.classBlacklist.contains(klass->GetName())) return;
+    
     out << "// Namespace: ";
     out << klass->GetNamespace();
     out << "\n";
@@ -712,10 +643,10 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
 
     auto fields = klass->GetFields();
     for (auto f : fields) {
-        if (refl.Type.GetField) [&]{
+        if (C_Type.GetField) [&]{
             auto fName = f->GetName();
             auto fNameS = String::New(fName.c_str());
-            auto vGetField = tO->GetVirtualMethod(refl.Type.GetField);
+            auto vGetField = tO->GetVirtualMethod(C_Type.GetField);
             if (!vGetField) return;
 
             auto fO = vGetField->Invoke(tO, fNameS);
@@ -759,12 +690,12 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     for (auto p : props) {
         auto pName = p->GetName();
 
-        if (refl.Type.GetField) [&]{
+        if (C_Type.GetField) [&]{
             auto pNameO = String::New(pName.c_str());
-            auto vGetProperty = tO->GetVirtualMethod(refl.Type.GetProperty);
+            auto vGetProperty = tO->GetVirtualMethod(C_Type.GetProperty);
             if (!vGetProperty) return;
 
-            auto pO = vGetProperty->Invoke(tO, pNameO, BindingFlags::DECLARED_ONLY);
+            auto pO = vGetProperty->Invoke(tO, pNameO, BindingFlags::DECLARED_ONLY | BindingFlags::PUBLIC | BindingFlags::NON_PUBLIC | BindingFlags::STATIC | BindingFlags::INSTANCE);
             DoMemberForAttr(pO, out);
         }();
 
@@ -798,14 +729,14 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         std::vector<std::string> parFmts;
 
         if (
-            refl.Array.GetValue &&
-            refl.MethodBase.GetParameters &&
-            refl.ParameterInfo.get_DefaultValue &&
-            refl.ParameterInfo.get_Name &&
-            refl.ParameterInfo.get_Type &&
-            refl.ParameterInfo.get_Attributes
+            C_Array.GetValue &&
+            C_MethodBase.GetParameters &&
+            C_ParameterInfo.get_DefaultValue &&
+            C_ParameterInfo.get_Name &&
+            C_ParameterInfo.get_Type &&
+            C_ParameterInfo.get_Attributes
         ) [&]{
-            auto vGetParams = mObj->GetVirtualMethod(refl.MethodBase.GetParameters);
+            auto vGetParams = mObj->GetVirtualMethod(C_MethodBase.GetParameters);
             if (!vGetParams) return;
 
             auto arr = (Array*) vGetParams->Invoke(mObj);
@@ -816,13 +747,13 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
             if (lenI < len) return;
 
             for (int i = 0; i < len; i++) {
-                auto obj = refl.Array.GetValue->Invoke(arr, i);
+                auto obj = C_Array.GetValue->Invoke(arr, i);
                 if (!obj) continue;
 
-                auto vGetName = obj->GetVirtualMethod(refl.ParameterInfo.get_Name);
-                auto vGetType = obj->GetVirtualMethod(refl.ParameterInfo.get_Type);
-                auto vGetDefV = obj->GetVirtualMethod(refl.ParameterInfo.get_DefaultValue);
-                auto vGetAttrs = obj->GetVirtualMethod(refl.ParameterInfo.get_Attributes);
+                auto vGetName = obj->GetVirtualMethod(C_ParameterInfo.get_Name);
+                auto vGetType = obj->GetVirtualMethod(C_ParameterInfo.get_Type);
+                auto vGetDefV = obj->GetVirtualMethod(C_ParameterInfo.get_DefaultValue);
+                auto vGetAttrs = obj->GetVirtualMethod(C_ParameterInfo.get_Attributes);
                 if (!vGetName) continue;
                 if (!vGetType) continue;
                 if (!vGetDefV) continue;
@@ -914,11 +845,11 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
         out << " ";
         out << mName;
         
-        if ((isInflated || isGeneric) && refl.Array.GetValue && refl.MethodBase.GetGenericArguments) [&]{
+        if ((isInflated || isGeneric) && C_Array.GetValue && C_MethodBase.GetGenericArguments) [&]{
             auto to = m->GetObject();
             if (!to) return;
 
-            auto vGetGenArgs = to->GetVirtualMethod(refl.MethodBase.GetGenericArguments);
+            auto vGetGenArgs = to->GetVirtualMethod(C_MethodBase.GetGenericArguments);
             if (!vGetGenArgs) return;
 
             auto args = (Array*) vGetGenArgs->Invoke(to);
@@ -928,7 +859,7 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
 
             std::vector<std::string> pNames;
             for (int i = 0; i < len; i++) {
-                auto p = refl.Array.GetValue->Invoke(args, i);
+                auto p = C_Array.GetValue->Invoke(args, i);
                 auto pt = Class::FromSystemType(p);
 
                 pNames.push_back(FormatTypeName(pt->GetType()));
@@ -953,262 +884,20 @@ void DoClass(Class* klass, LibResolver& libRes, std::ofstream& out) {
     out.flush();
 }
 
-Class* FindReflClass(Image* img, const std::string& ns, const std::string& name) {
-    Class* ret = img->FindClass(ns, name);
-    if (!ret)
-        Log::Warn("class {}.{} not found", ns, name);
-
-    return ret;
-}
-
-void FindReflMethod(Class* klass, std::string_view name, std::string_view rt, const std::vector<std::string_view>& params, Method** method, std::string_view debugSuffix = {}) {
-    if(!(*method = Finder::FindMethod(klass, name, rt, params)))
-        Log::Warn("method {}.{}{} not found", klass->GetName(), name, debugSuffix);
-}
-
-void InitUnityReflection() {
-    Image* image = Finder::FindImage("UnityEngine.CoreModule.dll");
-    if (!image) {
-        Log::Warn("image UnityEngine.CoreModule.dll not found");
-        return;
-    }
-
-    Class* appC = FindReflClass(image, "UnityEngine", "Application");
-    if (!appC) return;
-
-    FindReflMethod(appC,
-        "get_unityVersion",
-        "System.String",
-        {},
-        &refl.UnityEngine.get_unityVersion
-    );
-}
-
-void InitBoxSize(Image* corlib) {
-    Class* objC = FindReflClass(corlib, "System", "Object");
-    if (!objC) return;
-
-    structBoxSize = objC->GetInstanceSize();
-    Log::Debug("object box size: 0x{:X}", structBoxSize);
-}
-
-void InitReflection(Image* corlib) {
-    InitBoxSize(corlib);
-
-    refl.Type.klass = FindReflClass(corlib, "System", "Type");
-    if (refl.Type.klass) {
-        FindReflMethod(
-            refl.Type.klass,
-            "GetGenericArguments",
-            "System.Type[]",
-            {},
-            &refl.Type.GetGenericArguments
-        );
-        FindReflMethod(
-            refl.Type.klass,
-            "GetField",
-            "System.Reflection.FieldInfo",
-            {"System.String"},
-            &refl.Type.GetField
-        );
-        FindReflMethod(
-            refl.Type.klass,
-            "GetProperty",
-            "System.Reflection.PropertyInfo",
-            {"System.String", "System.Reflection.BindingFlags"},
-            &refl.Type.GetProperty
-        );
-    }
-
-    Class* methodC = FindReflClass(corlib, "System.Reflection", "MethodBase");
-    if (methodC) {
-        FindReflMethod(
-            methodC,
-            "GetGenericArguments",
-            "System.Type[]",
-            {},
-            &refl.MethodBase.GetGenericArguments
-        );
-        FindReflMethod(
-            methodC,
-            "GetParameters",
-            "System.Reflection.ParameterInfo[]",
-            {},
-            &refl.MethodBase.GetParameters
-        );
-    }
-
-    Class* parC = FindReflClass(corlib, "System.Reflection", "ParameterInfo");
-    if (parC) {
-        FindReflMethod(
-            parC,
-            "get_Attributes",
-            "System.Reflection.ParameterAttributes",
-            {},
-            &refl.ParameterInfo.get_Attributes
-        );
-        FindReflMethod(
-            parC,
-            "get_DefaultValue",
-            "System.Object",
-            {},
-            &refl.ParameterInfo.get_DefaultValue
-        );
-        FindReflMethod(
-            parC,
-            "get_Name",
-            "System.String",
-            {},
-            &refl.ParameterInfo.get_Name
-        );
-        FindReflMethod(
-            parC,
-            "get_ParameterType",
-            "System.Type",
-            {},
-            &refl.ParameterInfo.get_Type
-        );
-    }
-
-    Class* arrC = FindReflClass(corlib, "System", "Array");
-    if (arrC) {
-        FindReflMethod(
-            arrC,
-            "GetValue",
-            "System.Object",
-            {"System.Int32"},
-            &refl.Array.GetValue
-        );
-    }
-
-    Class* iColl = FindReflClass(corlib, "System.Collections", "ICollection");
-    if (iColl) {
-        FindReflMethod(
-            iColl,
-            "get_Count",
-            "System.Int32",
-            {},
-            &refl.ICollection.get_Count
-        );
-    }
+void DoAssembly(Assembly* a, std::ofstream& out) {
+    Image* img = a->GetImage();
+    if (!img) return;
     
-    refl.IList.klass = FindReflClass(corlib, "System.Collections", "IList");
-    if (refl.IList.klass) {
-        FindReflMethod(
-            refl.IList.klass,
-            "get_Item",
-            "System.Object",
-            {"System.Int32"},
-            &refl.IList.get_Item
-        );
+    Log::Debug("dumping assembly: {}", img->GetName());
+
+    auto klasses = img->GetClasses();
+    for (auto k : klasses) {
+        DoClass(k, out);
     }
 
-    Class* memberInfoC = FindReflClass(corlib, "System.Reflection", "MemberInfo");
-    if (memberInfoC) {
-        FindReflMethod(
-            memberInfoC,
-            "get_Name",
-            "System.String",
-            {},
-            &refl.MemberInfo.get_Name
-        );
-    }
-
-    InitUnityReflection();
+    out.flush();
 }
 
-void InitReflectionAtt(Image* corlib) {
-    Class* customAttC = FindReflClass(corlib, "System.Reflection", "CustomAttributeData");
-    if (customAttC) {
-        FindReflMethod(
-            customAttC,
-            "GetCustomAttributes",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
-            {"System.Reflection.MemberInfo"},
-            &refl.CustomAttributeData.GetCustomAttributesM,
-            "(M)"
-        );
-
-        FindReflMethod(
-            customAttC,
-            "GetCustomAttributes",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeData>",
-            {"System.Reflection.ParameterInfo"},
-            &refl.CustomAttributeData.GetCustomAttributesP,
-            "(P)"
-        );
-
-        FindReflMethod(
-            customAttC,
-            "get_AttributeType",
-            "System.Type",
-            {},
-            &refl.CustomAttributeData.get_AttributeType
-        );
-
-        FindReflMethod(
-            customAttC,
-            "get_ConstructorArguments",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeTypedArgument>",
-            {},
-            &refl.CustomAttributeData.get_ConstructorArguments
-        );
-
-        FindReflMethod(
-            customAttC,
-            "get_NamedArguments",
-            "System.Collections.Generic.IList<System.Reflection.CustomAttributeNamedArgument>",
-            {},
-            &refl.CustomAttributeData.get_NamedArguments
-        );
-    }
-
-    refl.CustomAttributeTypedArgument.klass = FindReflClass(
-        corlib,
-        "System.Reflection",
-        "CustomAttributeTypedArgument"
-    );
-    if (refl.CustomAttributeTypedArgument.klass) {
-        FindReflMethod(
-            refl.CustomAttributeTypedArgument.klass,
-            "get_Value",
-            "System.Object",
-            {},
-            &refl.CustomAttributeTypedArgument.get_Value
-        );
-    }
-
-    Class* namedArgC = FindReflClass(
-        corlib,
-        "System.Reflection",
-        "CustomAttributeNamedArgument"
-    );
-    if (namedArgC) {
-        FindReflMethod(
-            namedArgC,
-            "get_MemberName",
-            "System.String",
-            {},
-            &refl.CustomAttributeNamedArgument.get_MemberName
-        );
-
-        FindReflMethod(
-            namedArgC,
-            "get_MemberInfo",
-            "System.Reflection.MemberInfo",
-            {},
-            &refl.CustomAttributeNamedArgument.get_MemberInfo
-        );
-
-        FindReflMethod(
-            namedArgC,
-            "get_TypedValue",
-            "System.Reflection.CustomAttributeTypedArgument",
-            {},
-            &refl.CustomAttributeNamedArgument.get_TypedValue
-        );
-    }
-}
 
 std::unique_ptr<ApiResolver> GetApiResolver(const fs::path& extDir) {
     auto mapFileP = extDir / "symbol_map.txt";
@@ -1335,13 +1024,134 @@ std::map<uintptr_t, uintptr_t> GetStaticWriteMap(const fs::path& extDir) {
     return {};
 }
 
+void DumperMain(bool attach) {
+    Domain* dmn = Domain::GetInstance();
+    if (!dmn) {
+        Log::Error("cannot obtain domain");
+        return;
+    }
+    Log::Debug("domain: 0x{:X}", (uintptr_t) dmn);
+
+    Thread* thr = nullptr;
+    if (attach) {
+        thr = Thread::Attach(dmn);
+        if (!thr) {
+            Log::Error("cannot attach thread");
+            return;
+        }
+        Log::Debug("attached thread: 0x{:X}", (uintptr_t) thr);
+    }
+
+    Image* corlib = Image::GetCorlib();
+    if (!corlib) {
+        Log::Error("cannot obtain corlib");
+    } else {
+        Log::Debug("corlib: 0x{:X}", (uintptr_t) corlib);
+
+        ReflectionIniter::InitReflection(corlib);
+        ReflectionIniter::InitUnityReflection();
+    }
+    Log::Debug("initialized reflection methods");
+
+    structBoxSize = ReflectionIniter::GetBoxSize(corlib);
+
+    if (C_UnityEngine.get_unityVersion) {
+        auto verO = (String*) C_UnityEngine.get_unityVersion->Invoke(nullptr);
+        auto ver = verO ? StrUtil::U16ToU8(verO->GetChars()) : "null";
+        Log::Debug("unity version: {}", ver);
+    }
+
+    auto nm = corlib->GetName();
+    Log::Debug("corlib: {}", nm);
+
+    auto asms = dmn->GetAssemblies();
+    Log::Debug("assemblies: {:d}", asms.size());
+
+    if (config.filterAssembly) {
+        std::erase_if(asms, [&](Assembly* item) {
+            Image* img = item->GetImage();
+            if (!img) return true;
+            return config.assmblyFilter.find(img->GetName()) == config.assmblyFilter.end();
+        });
+
+        Log::Debug("filtered assemblies: {:d}", asms.size());
+    }
+
+    Log::Debug("dumping...");
+    auto start = std::chrono::steady_clock::now();
+
+    if (!config.classBlacklist.empty()) {
+        Log::Debug("blacklisted classes: {}", StrUtil::Join(config.classBlacklist, ", "));
+    }
+
+    if (!config.splitDump) {
+        std::ofstream out(outDir / "dump.cs", std::ios::trunc);
+
+        for (auto a : asms) {
+            Image* img = a->GetImage();
+            if (!img) continue;
+            
+            out << "// Assembly: ";
+            out << img->GetName();
+            out << "\n";
+        }
+        out << "\n";
+        out << "\n";
+
+        for (auto a : asms) {
+            DoAssembly(a, out);
+        }
+        out.flush();
+        out.close();
+    } else {
+        fs::path dumpDir = outDir / "dump";
+
+        for (auto a : asms) {
+            Image* img = a->GetImage();
+            if (!img) continue;
+
+            if (!fs::exists(dumpDir) && !fs::create_directories(dumpDir)) {
+                Log::Debug("cannot create dir: {}", dumpDir.c_str());
+                continue;
+            }
+
+            std::ofstream out(dumpDir / (img->GetName() + ".cs"), std::ios::trunc);
+            out << "// Assembly: ";
+            out << img->GetName();
+            out << "\n";
+            out << "\n";
+            out << "\n";
+
+            DoAssembly(a, out);
+        }
+    }
+
+    auto end = std::chrono::steady_clock::now();
+    float durSec = std::chrono::duration<float>(end - start).count();
+    Log::Debug("dump success ({:.3f}s)", durSec);
+    Log::Debug("output dir: {}", outDir.c_str());
+
+    Log::Debug("detaching il2cpp...");
+    if (thr) {
+        thr->Detach();
+    }
+
+    Log::Debug("all finished!");
+    Log::CloseFile();
+}
+
+void* (* Old_RuntimeInvoke)(void*, void*, void*, void*);
+void* Hook_RuntimeInvoke(void* a, void* b, void* c, void* d) {
+    static bool dumpOnce = true;
+    if (dumpOnce) {
+        dumpOnce = false;
+        DumperMain(false);
+    }
+    return Old_RuntimeInvoke(a, b, c, d);
+}
 
 void RunDumper() {
     using namespace Api;
-
-    Log::Debug("sleeping...");
-
-    std::this_thread::sleep_for(std::chrono::seconds(4));
 
     Log::Debug("running...");
 
@@ -1353,23 +1163,33 @@ void RunDumper() {
     Log::Debug("obtained external files dir: {}", extDirS);
     fs::path extDir(extDirS);
 
-    fs::path dir = fs::path(extDirS) / "runtime-dumper";
-    if (fs::exists(dir)) {
-        fs::remove_all(dir);
+    outDir = fs::path(extDirS) / "runtime-dumper";
+    if (fs::exists(outDir)) {
+        fs::remove_all(outDir);
         Log::Debug("cleaned dir");
     }
     
-    if (!fs::create_directories(dir)) {
-        Log::Debug("cannot create dir, {}", dir.c_str());
+    if (!fs::exists(outDir) && !fs::create_directories(outDir)) {
+        Log::Debug("cannot create dir: {}", outDir.c_str());
         return;
     }
 
-    fs::path logPath = dir / "log.txt";
+    fs::path logPath = outDir / "log.txt";
     Log::SetFile(logPath);
-
     Log::Debug("initialized log file");
 
-    auto libRes = LibResolver();
+    try {
+        config = Config::Load(extDir / "dumper_config.json");
+    } catch (const std::exception& e) {
+        Log::Debug("failed to load config.json: {}", e.what());
+        return;
+    }
+    Log::Debug("loaded config.json");
+
+    Log::Debug("sleeping... ({:d}s)", config.sleepTime);
+    std::this_thread::sleep_for(std::chrono::seconds(config.sleepTime));
+
+    libRes = LibResolver();
     auto res = GetApiResolver(extDir);
     auto staticWriteMap = GetStaticWriteMap(extDir);
 
@@ -1392,82 +1212,12 @@ void RunDumper() {
         Log::Debug("wrote value to offset 0x{:X}", offset);
     }
 
-    Domain* dmn = Domain::GetInstance();
-    if (!dmn) {
-        Log::Error("cannot obtain domain");
-        return;
-    }
-    Log::Debug("domain: 0x{:X}", (uintptr_t) dmn);
-
-    Thread* thr = Thread::Attach(dmn);
-    if (!thr) {
-        Log::Error("cannot attach thread");
-        return;
-    }
-    Log::Debug("thread: 0x{:X}", (uintptr_t) thr);
-
-    Image* corlib = Image::GetCorlib();
-    if (!corlib) {
-        Log::Error("cannot obtain corlib");
+    if (config.triggerByHook) {
+        Log::Debug("trigger by hook is enabled");
+        Log::Debug("hooking runtime_invoke...");
+        DobbyHook((void*) Api::Functions::runtime_invoke.GetPointer(), (void*) Hook_RuntimeInvoke, (void**) &Old_RuntimeInvoke);
+        Log::Debug("hooked runtime_invoke");
     } else {
-        Log::Debug("corlib: 0x{:X}", (uintptr_t) corlib);
-
-        InitReflection(corlib);
-        InitReflectionAtt(corlib);
+        DumperMain(true);
     }
-    Log::Debug("initialized reflection methods");
-
-    if (refl.UnityEngine.get_unityVersion) {
-        auto verO = (String*) refl.UnityEngine.get_unityVersion->Invoke(nullptr);
-        auto ver = verO ? StrUtil::U16ToU8(verO->GetChars()) : "null";
-        Log::Debug("unity version: {}", ver);
-    }
-
-    auto nm = corlib->GetName();
-    Log::Debug("corlib: {}", nm);
-
-    auto asms = dmn->GetAssemblies();
-    Log::Debug("assemblies: {:d}", asms.size());
-
-    Log::Debug("dumping...");
-    auto start = std::chrono::steady_clock::now();
-
-    std::ofstream out(dir / "dump.cs", std::ios::trunc);
-
-    for (auto a : asms) {
-        Image* img = a->GetImage();
-        if (!img) continue;
-        
-        out << "// Assembly: ";
-        out << img->GetName();
-        out << "\n";
-    }
-    out << "\n";
-    out << "\n";
-
-    for (auto a : asms) {
-        Image* img = a->GetImage();
-        if (!img) continue;
-        
-        Log::Debug("dumping assembly: {}", img->GetName());
-
-        auto klasses = img->GetClasses();
-        for (auto k : klasses) {
-            DoClass(k, libRes, out);
-        }
-
-        out.flush();
-    }
-    out.close();
-
-    auto end = std::chrono::steady_clock::now();
-    float durSec = std::chrono::duration<float>(end - start).count();
-    Log::Debug("dump success ({:.3f}s)", durSec);
-    Log::Debug("output dir: {}", dir.c_str());
-
-    Log::Debug("detaching il2cpp...");
-    thr->Detach();
-
-    Log::Debug("all finished!");
-    Log::CloseFile();
 }

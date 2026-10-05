@@ -1,3 +1,5 @@
+#pragma once
+
 namespace Api {
     namespace TypeEnum {
         constexpr int END         = 0x00;

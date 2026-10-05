@@ -8,6 +8,7 @@
 #include "api/class.h"
 #include "api/method.h"
 
+
 namespace Finder {
     Api::Image* FindImage(std::string_view name) {
         auto domain = Api::Domain::GetInstance();

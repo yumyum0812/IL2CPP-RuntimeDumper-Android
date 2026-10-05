@@ -8,3 +8,5 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_subdirectory(dumper)
 add_subdirectory(xdl-static)
+add_subdirectory(dobby-static)
+add_subdirectory(json)

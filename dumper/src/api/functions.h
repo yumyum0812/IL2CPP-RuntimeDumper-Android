@@ -28,6 +28,7 @@ namespace Api {
         virtual bool Valid() const = 0;
         virtual std::string Name() const = 0;
         virtual void Assign(void* ptr) = 0;
+        virtual void* GetPointer() = 0;
     };
 }
 
@@ -63,6 +64,10 @@ class Api::Functions {
             if (!fn)
                 throw std::runtime_error(std::format("call to uninitialized api call: {}", _name));
             return fn(std::forward<A>(a)...);
+        }
+
+        void* GetPointer() override {
+            return reinterpret_cast<void*>(fn);
         }
     };
 

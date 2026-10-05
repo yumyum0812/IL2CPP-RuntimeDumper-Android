@@ -1,5 +1,6 @@
 #include <vector>
 #include <filesystem>
+#include <set>
 
 namespace StrUtil {
     std::string Join(const std::vector<std::string>& vars, const std::string& delim) {
@@ -7,6 +8,15 @@ namespace StrUtil {
         for (int i = 0; i < vars.size(); i++) {
             if (i >= 1) out += delim;
             out += vars[i];
+        }
+        return out;
+    }
+
+    std::string Join(const std::set<std::string>& vars, const std::string& delim) {
+        std::string out;
+        for (auto it = vars.begin(); it != vars.end(); ++it) {
+            if (it != vars.begin()) out += delim;
+            out += *it;
         }
         return out;
     }

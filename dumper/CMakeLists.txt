@@ -9,4 +9,6 @@ target_link_libraries(dumper
         android
         log
         xdl-static
+        dobby-static
+        json
 )
