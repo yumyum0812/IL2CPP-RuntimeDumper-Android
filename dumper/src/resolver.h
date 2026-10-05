@@ -9,7 +9,6 @@
 
 
 class LibResolver {
-    inline constexpr static auto LIB_NAME = "libil2cpp.so";
     inline constexpr static uintptr_t ADDR_INVALID = UINTPTR_MAX;
 
     struct LoadSegment {
@@ -18,18 +17,29 @@ class LibResolver {
         uintptr_t filesz;
     };
 
+    std::string libName = "libil2cpp.so";
     void* handle = nullptr;
     uintptr_t base = 0;
     std::vector<LoadSegment> segments;
 
-    static void* FindHandle() {
-        return xdl_open(LIB_NAME, XDL_DEFAULT);
+    void* FindHandle() {
+        return xdl_open(libName.c_str(), XDL_DEFAULT);
     }
 
 public:
-    void Resolve() {
+    LibResolver(std::string_view libName = "") {
+        this->libName = libName;
+    }
+
+    bool Resolve() {
+        int elapsedMs = 0;
         while (!(handle = FindHandle())) {
+            if (elapsedMs >= 30'000) {
+                Log::Debug("resolver: library {} not found for 30 seconds", libName);
+                return false;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            elapsedMs += 50;
         }
 
         xdl_info_t info{};
@@ -47,6 +57,8 @@ public:
                 static_cast<uintptr_t>(ph.p_filesz)
             });
         }
+
+        return true;
     }
 
     uintptr_t RvaToOffset(uintptr_t rva) {
@@ -131,7 +143,9 @@ public:
 
 bool InitApi(LibResolver& libRes, ApiResolver& res) {
     Log::Debug("init: resolving library...");
-    libRes.Resolve();
+    if (!libRes.Resolve()) {
+        Log::Debug("init: failed to resolve library");
+    }
     
     Log::Debug("init: resolving api...");
     res.Resolve(libRes, Api::Functions::GetCalls());

@@ -69,7 +69,7 @@ const std::unordered_map<int, std::string> typeSuffixes = {
 };
 
 
-Config config;
+Config::DumperConfig config;
 std::filesystem::path outDir;
 LibResolver libRes;
 
@@ -487,19 +487,25 @@ std::string FormatAttrTyped(Object* typed) {
     return FormatObject(v);
 }
 
-bool CanDoAttr() {
+bool CanDumpAttrs() {
     return C_CustomAttributeData.get_AttributeType &&
         C_CustomAttributeData.get_ConstructorArguments &&
         C_CustomAttributeData.get_NamedArguments &&
         C_CustomAttributeTypedArgument.get_Value &&
         C_CustomAttributeNamedArgument.get_TypedValue &&
-        (C_CustomAttributeNamedArgument.get_MemberName || (C_CustomAttributeNamedArgument.get_MemberInfo && C_MemberInfo.get_Name));
+        (
+            C_CustomAttributeNamedArgument.get_MemberName ||
+            (
+                C_CustomAttributeNamedArgument.get_MemberInfo &&
+                C_MemberInfo.get_Name
+            )
+        );
 }
 
-void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
-    if (!CanDoAttr()) return;
+void DumpAttrs(Object* attrsList, std::ostream& out, int indents, bool newLine, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
+    if (!CanDumpAttrs()) return;
 
-    IterationHelper::IterateIList(attrs, "System.Reflection.CustomAttributeData", [&] (Object* attr) {
+    IterationHelper::IterateIList(attrsList, "System.Reflection.CustomAttributeData", [&] (Object* attr) {
         if (!attr) return;
 
         Object* attrTO = C_CustomAttributeData.get_AttributeType->Invoke(attr);
@@ -519,7 +525,7 @@ void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vecto
 
         StrUtil::EraseSuffix(attrTypeName, "Attribute");
 
-        out << StrUtil::Repeat(INDENT, ind);
+        out << StrUtil::Repeat(INDENT, indents);
         out << "[";
         out << attrTypeName;
 
@@ -566,33 +572,35 @@ void DoAttr(Object* attrs, std::ostream& out, int ind, bool nl, const std::vecto
             out << ")";
         }
         out << "]";
-        out << (nl ? "\n" : " ");
+        out << (newLine ? "\n" : " ");
     });
 }
 
-void DoMemberForAttr(Object* memberInfo, std::ostream& out, int ind = 1) {
+void DumpMemberAttrs(Object* memberInfo, std::ostream& out, int ind = 1) {
     if (!memberInfo) return;
-    if (!CanDoAttr()) return;
+    if (!CanDumpAttrs()) return;
 
     if (!C_CustomAttributeData.GetCustomAttributesM) return;
 
     Object* attrs = C_CustomAttributeData.GetCustomAttributesM->Invoke(nullptr, memberInfo);
     if (!attrs) return;
     
-    DoAttr(attrs, out, ind, true);
+    DumpAttrs(attrs, out, ind, true);
 }
 
-void DoParamAttr(Object* paramInfo, std::ostream& out, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
+void DumpParamAttrs(Object* paramInfo, std::ostream& out, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
     if (!paramInfo) return;
-    if (!CanDoAttr()) return;
+    if (!CanDumpAttrs()) return;
+
+    if (!C_CustomAttributeData.GetCustomAttributesP) return;
 
     Object* attrs = C_CustomAttributeData.GetCustomAttributesP->Invoke(nullptr, paramInfo);
     if (!attrs) return;
 
-    DoAttr(attrs, out, 0, false, excludes);
+    DumpAttrs(attrs, out, 0, false, excludes);
 }
 
-void DoClass(Class* klass, std::ofstream& out) {
+void DumpClass(Class* klass, std::ofstream& out) {
     if (config.classBlacklist.contains(klass->GetName())) return;
     
     out << "// Namespace: ";
@@ -631,7 +639,7 @@ void DoClass(Class* klass, std::ofstream& out) {
 
     Object* tO = type->GetObject();
     if (!tO) return;
-    DoMemberForAttr(tO, out, 0);
+    DumpMemberAttrs(tO, out, 0);
 
     std::string ext;
     if (!extNames.empty()) {
@@ -650,7 +658,7 @@ void DoClass(Class* klass, std::ofstream& out) {
             if (!vGetField) return;
 
             auto fO = vGetField->Invoke(tO, fNameS);
-            DoMemberForAttr(fO, out);
+            DumpMemberAttrs(fO, out);
         }();
 
         auto fType = f->GetType();
@@ -696,7 +704,7 @@ void DoClass(Class* klass, std::ofstream& out) {
             if (!vGetProperty) return;
 
             auto pO = vGetProperty->Invoke(tO, pNameO, BindingFlags::DECLARED_ONLY | BindingFlags::PUBLIC | BindingFlags::NON_PUBLIC | BindingFlags::STATIC | BindingFlags::INSTANCE);
-            DoMemberForAttr(pO, out);
+            DumpMemberAttrs(pO, out);
         }();
 
         auto fGet = p->GetGetMethod();
@@ -782,7 +790,7 @@ void DoClass(Class* klass, std::ofstream& out) {
                 if (hasDefValue) {
                     excs.push_back({"System.Runtime.InteropServices", "OptionalAttribute"});
                 }
-                DoParamAttr(obj, atts, excs);
+                DumpParamAttrs(obj, atts, excs);
                 s += atts.str();
 
                 bool isIn = (attrs & ParameterAttributes::IN) != 0;
@@ -837,7 +845,7 @@ void DoClass(Class* klass, std::ofstream& out) {
         out << std::format("// RVA: {} Offset: {} VA: {}", Formats::FormatOffset(rva), Formats::FormatOffset(off), Formats::FormatOffset(rva));
         out << "\n";
 
-        DoMemberForAttr(mObj, out);
+        DumpMemberAttrs(mObj, out);
 
         out << INDENT;
         out << FormatMethodAccessor(m);
@@ -884,7 +892,7 @@ void DoClass(Class* klass, std::ofstream& out) {
     out.flush();
 }
 
-void DoAssembly(Assembly* a, std::ofstream& out) {
+void DumpAssembly(Assembly* a, std::ofstream& out) {
     Image* img = a->GetImage();
     if (!img) return;
     
@@ -892,168 +900,62 @@ void DoAssembly(Assembly* a, std::ofstream& out) {
 
     auto klasses = img->GetClasses();
     for (auto k : klasses) {
-        DoClass(k, out);
+        DumpClass(k, out);
     }
 
     out.flush();
 }
 
-
-std::unique_ptr<ApiResolver> GetApiResolver(const fs::path& extDir) {
-    auto mapFileP = extDir / "symbol_map.txt";
-    auto rvaFileP = extDir / "rva_map.txt";
-
-    if (fs::exists(mapFileP)) {
-        std::map<std::string, std::string> symMap;
-        Log::Debug("symbol_map.txt found");
-
-        std::ifstream mapF(mapFileP);
-
-        std::string line;
-        while (std::getline(mapF, line)) {
-            std::istringstream ss(line);
-
-            std::string key;
-            std::string value;
-            ss >> key >> value;
-
-            if (key.empty()) {
-                Log::Debug("key is empty");
-                continue;
-            }
-            if (value.empty()) {
-                Log::Debug("value is empty");
-                continue;
-            }
-
-            symMap[key] = value;
-        }
-
-        Log::Debug("loaded {:d} keys", symMap.size());
-        return std::make_unique<SymApiResolver>(symMap);
+void DumpAssemblies(const std::vector<Assembly*> asms, std::ofstream& out) {
+    for (auto a : asms) {
+        Image* img = a->GetImage();
+        if (!img) continue;
+        
+        out << "// Assembly: ";
+        out << img->GetName();
+        out << "\n";
     }
+    out << "\n";
+    out << "\n";
+    out.flush();
 
-    if (fs::exists(rvaFileP)) {
-        std::map<std::string, size_t> offMap;
-        Log::Debug("rva_map.txt found");
-
-        std::ifstream mapF(rvaFileP);
-
-        std::string line;
-        while (std::getline(mapF, line)) {
-            std::istringstream ss(line);
-
-            std::string key;
-            std::string value;
-            ss >> key >> value;
-
-            if (key.empty()) {
-                Log::Debug("key is empty");
-                continue;
-            }
-            if (value.empty()) {
-                Log::Debug("value is empty");
-                continue;
-            }
-
-            try {
-                auto offset = static_cast<size_t>(std::stoull(value, nullptr, 16));
-                offMap[key] = offset;
-            } catch (const std::exception& e) {
-                Log::Debug("invalid offset for {}: {}", key, value);
-                return nullptr;
-            }
-        }
-
-        Log::Debug("loaded {:d} keys", offMap.size());
-        return std::make_unique<RvaApiResolver>(offMap);
+    for (auto a : asms) {
+        DumpAssembly(a, out);
+        out.flush();
     }
-
-    return std::make_unique<SymApiResolver>();
 }
 
-
-std::map<uintptr_t, uintptr_t> GetStaticWriteMap(const fs::path& extDir) {
-    auto mapFileP = extDir / "static_write_map.txt";
-
-    if (fs::exists(mapFileP)) {
-        std::map<uintptr_t, uintptr_t> out;
-        Log::Debug("static_write_map.txt found");
-
-        std::ifstream mapF(mapFileP);
-
-        std::string line;
-        while (std::getline(mapF, line)) {
-            std::istringstream ss(line);
-
-            std::string key;
-            std::string value;
-            ss >> key >> value;
-
-            if (key.empty()) {
-                Log::Debug("key is empty");
-                continue;
-            }
-            if (value.empty()) {
-                Log::Debug("value is empty");
-                continue;
-            }
-
-            size_t offset = 0;
-            try {
-                offset = static_cast<size_t>(std::stoull(key, nullptr, 16));
-            } catch (const std::exception& e) {
-                Log::Debug("invalid write offset: {}", key);
-                return {};
-            }
-
-            uintptr_t val = 0;
-            try {
-                val = static_cast<size_t>(std::stoull(value, nullptr, 16));
-            } catch (const std::exception& e) {
-                Log::Debug("invalid write value for 0x{:X}: {}", offset, value);
-                return {};
-            }
-
-            out[offset] = val;
-        }
-
-        Log::Debug("loaded {:d} write offsets", out.size());
-        return out;
-    }
-    return {};
-}
-
-void DumperMain(bool attach) {
-    Domain* dmn = Domain::GetInstance();
-    if (!dmn) {
+void DumperMain(bool attachToThread) {
+    Domain* domain = Domain::GetInstance();
+    if (!domain) {
         Log::Error("cannot obtain domain");
         return;
     }
-    Log::Debug("domain: 0x{:X}", (uintptr_t) dmn);
+    Log::Debug("domain: 0x{:X}", (uintptr_t) domain);
 
-    Thread* thr = nullptr;
-    if (attach) {
-        thr = Thread::Attach(dmn);
-        if (!thr) {
+    Thread* attached = nullptr;
+    if (attachToThread) {
+        attached = Thread::Attach(domain);
+        if (!attached) {
             Log::Error("cannot attach thread");
             return;
         }
-        Log::Debug("attached thread: 0x{:X}", (uintptr_t) thr);
+        Log::Debug("attached thread: 0x{:X}", (uintptr_t) attached);
     }
 
     Image* corlib = Image::GetCorlib();
     if (!corlib) {
         Log::Error("cannot obtain corlib");
     } else {
-        Log::Debug("corlib: 0x{:X}", (uintptr_t) corlib);
+        auto nm = corlib->GetName();
+        Log::Debug("corlib: {}", nm);
 
         ReflectionIniter::InitReflection(corlib);
         ReflectionIniter::InitUnityReflection();
+        structBoxSize = ReflectionIniter::GetBoxSize(corlib);
+        
+        Log::Debug("initialized reflection");
     }
-    Log::Debug("initialized reflection methods");
-
-    structBoxSize = ReflectionIniter::GetBoxSize(corlib);
 
     if (C_UnityEngine.get_unityVersion) {
         auto verO = (String*) C_UnityEngine.get_unityVersion->Invoke(nullptr);
@@ -1061,16 +963,14 @@ void DumperMain(bool attach) {
         Log::Debug("unity version: {}", ver);
     }
 
-    auto nm = corlib->GetName();
-    Log::Debug("corlib: {}", nm);
-
-    auto asms = dmn->GetAssemblies();
+    auto asms = domain->GetAssemblies();
     Log::Debug("assemblies: {:d}", asms.size());
 
     if (config.filterAssembly) {
         std::erase_if(asms, [&](Assembly* item) {
             Image* img = item->GetImage();
             if (!img) return true;
+
             return config.assmblyFilter.find(img->GetName()) == config.assmblyFilter.end();
         });
 
@@ -1078,7 +978,7 @@ void DumperMain(bool attach) {
     }
 
     Log::Debug("dumping...");
-    auto start = std::chrono::steady_clock::now();
+    auto startTime = std::chrono::steady_clock::now();
 
     if (!config.classBlacklist.empty()) {
         Log::Debug("blacklisted classes: {}", StrUtil::Join(config.classBlacklist, ", "));
@@ -1087,22 +987,7 @@ void DumperMain(bool attach) {
     if (!config.splitDump) {
         std::ofstream out(outDir / "dump.cs", std::ios::trunc);
 
-        for (auto a : asms) {
-            Image* img = a->GetImage();
-            if (!img) continue;
-            
-            out << "// Assembly: ";
-            out << img->GetName();
-            out << "\n";
-        }
-        out << "\n";
-        out << "\n";
-
-        for (auto a : asms) {
-            DoAssembly(a, out);
-        }
-        out.flush();
-        out.close();
+        DumpAssemblies(asms, out);
     } else {
         fs::path dumpDir = outDir / "dump";
 
@@ -1115,40 +1000,39 @@ void DumperMain(bool attach) {
                 continue;
             }
 
-            std::ofstream out(dumpDir / (img->GetName() + ".cs"), std::ios::trunc);
-            out << "// Assembly: ";
-            out << img->GetName();
-            out << "\n";
-            out << "\n";
-            out << "\n";
-
-            DoAssembly(a, out);
+            std::string asmName = img->GetName();
+            StrUtil::EraseSuffix(asmName, ".dll");
+            
+            std::ofstream out(dumpDir / (asmName + ".cs"), std::ios::trunc);
+            DumpAssemblies({a}, out);
         }
     }
 
-    auto end = std::chrono::steady_clock::now();
-    float durSec = std::chrono::duration<float>(end - start).count();
-    Log::Debug("dump success ({:.3f}s)", durSec);
+    auto finishTime = std::chrono::steady_clock::now();
+    float durationSec = std::chrono::duration<float>(finishTime - startTime).count();
+    Log::Debug("dump success ({:.3f}s)", durationSec);
     Log::Debug("output dir: {}", outDir.c_str());
 
-    Log::Debug("detaching il2cpp...");
-    if (thr) {
-        thr->Detach();
+    if (attached) {
+        Log::Debug("detaching il2cpp...");
+        attached->Detach();
     }
 
     Log::Debug("all finished!");
     Log::CloseFile();
 }
 
-void* (* Old_RuntimeInvoke)(void*, void*, void*, void*);
-void* Hook_RuntimeInvoke(void* a, void* b, void* c, void* d) {
+
+Object* (* Old_RuntimeInvoke)(Method* method, void*, void** args, Object** exc);
+Object* Hook_RuntimeInvoke(Method* method, void* obj, void** args, Object** exc) {
     static bool dumpOnce = true;
     if (dumpOnce) {
         dumpOnce = false;
         DumperMain(false);
     }
-    return Old_RuntimeInvoke(a, b, c, d);
+    return Old_RuntimeInvoke(method, obj, args, exc);
 }
+
 
 void RunDumper() {
     using namespace Api;
@@ -1179,7 +1063,7 @@ void RunDumper() {
     Log::Debug("initialized log file");
 
     try {
-        config = Config::Load(extDir / "dumper_config.json");
+        config = Config::DumperConfig::Load(extDir / "dumper_config.json");
     } catch (const std::exception& e) {
         Log::Debug("failed to load config.json: {}", e.what());
         return;
@@ -1189,9 +1073,9 @@ void RunDumper() {
     Log::Debug("sleeping... ({:d}s)", config.sleepTime);
     std::this_thread::sleep_for(std::chrono::seconds(config.sleepTime));
 
-    libRes = LibResolver();
-    auto res = GetApiResolver(extDir);
-    auto staticWriteMap = GetStaticWriteMap(extDir);
+    libRes = LibResolver(config.libName);
+    auto res = Config::GetApiResolver(extDir);
+    auto staticWriteMap = Config::GetStaticWriteMap(extDir);
 
     if (!res) {
         Log::Error("cannot create api resolver");
