@@ -59,9 +59,8 @@ const std::unordered_map<int, std::string> typeAliases = {
     {TypeEnum::R4, "float"},
     {TypeEnum::R8, "double"},
     {TypeEnum::STRING, "string"},
-    {TypeEnum::TYPEDBYREF, "TypedReference"},
-    {TypeEnum::I, "IntPtr"},
-    {TypeEnum::U, "UIntPtr"},
+    {TypeEnum::I, "nint"},
+    {TypeEnum::U, "nuint"},
     {TypeEnum::OBJECT, "object"},
 };
 
@@ -116,9 +115,11 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
 
     std::string res;
 
-    auto outer = klass->GetDeclaringClass();
-    if (outer)
-        res += FormatTypeName(outer->GetType(), forDefinition) + ".";
+    if (forDefinition) {
+        auto outer = klass->GetDeclaringClass();
+        if (outer)
+            res += FormatTypeName(outer->GetType(), forDefinition) + ".";
+    }
     
     if (typeSuffixes.contains(tp)) {
         auto ec = klass->GetElementClass();
@@ -126,9 +127,12 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
             return res + FormatTypeName(ec->GetType(), forDefinition) + typeSuffixes.at(tp);
     }
     
-    if (!forDefinition && typeAliases.contains(tp)) {
-        return typeAliases.at(tp);
+    if (!forDefinition) {
+        if (auto it = typeAliases.find(tp); it != typeAliases.end()) {
+            return it->second;
+        }
     }
+
 
     auto name = klass->GetName();
     auto isGeneric = klass->IsGeneric();
