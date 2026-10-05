@@ -24,6 +24,7 @@
 #include "api/string.h"
 #include "api/array.h"
 #include "api/property.h"
+
 #include "utils/address.h"
 #include "utils/jni_util.h"
 #include "utils/str_util.h"
@@ -34,6 +35,7 @@
 #include "reflection_initer.h"
 #include "iteration_helper.h"
 #include "config.h"
+
 
 using namespace Api;
 using namespace ReflectionMethods;
