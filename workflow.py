@@ -1,4 +1,4 @@
-# needed libs: python-dotenv
+# requirements: python-dotenv
 
 from dataclasses import dataclass
 import os
@@ -23,7 +23,6 @@ dotenv.load_dotenv()
 class Build:
     min_api: int
     abis: set[str]
-    build_type: str
 
 @dataclass
 class Env:
@@ -65,11 +64,14 @@ def get_build() -> Build:
     try:
         min_api = conf["min_api"]
         abis = conf["target_abis"]
-        build_type = conf["build_type"]
     except KeyError as e:
         raise WorkError(f"key {",".join(f"'{s}'" for s in e.args)} not found in build config") from e
 
-    type_checks = [(min_api, int, "min_api"), (abis, list, "target_apis"), (build_type, str, "build_type")]
+    type_checks = [
+        (min_api, int, "min_api"),
+        (abis, list, "target_apis")
+    ]
+
     for v, t, n in type_checks:
         if not isinstance(v, t):
             raise WorkError(f"'{n}' excepted {t.__name__}, not {type(v).__name__}")
@@ -83,7 +85,6 @@ def get_build() -> Build:
     return Build(
         min_api=min_api,
         abis=abis_set,
-        build_type=build_type,
     )
 
 def get_env() -> Env:
@@ -104,16 +105,11 @@ def get_env() -> Env:
         ninja_exe=ninja_exe
     )
 
+def make_varname(variant: str, abi: str) -> str:
+    return variant.lower() + "-" + abi
 
-def configure(bc: Build, ec: Env):
-    # print_info(f"environment config:")
-    # print_info(f"  ndk: {env.ndk_home}")
-    # print_info(f"  cmake: {env.cmake_exe}")
 
-    # print_info(f"build config:")
-    # print_info(f"  min api: {build.min_api}")
-    # print_info(f"  abis: {build.abis}")
-
+def configure(bc: Build, ec: Env, variant: str):
     print_info("configuring...")
 
     project_dir = get_project_dir()
@@ -121,14 +117,16 @@ def configure(bc: Build, ec: Env):
     cmake_toolchain = os.path.join(ec.ndk_home, "build/cmake/android.toolchain.cmake")
 
     for abi in bc.abis:
-        build_dir_abi = os.path.join(build_dir, abi)
+        print_info(f"configuring for {variant.lower()} {abi}")
+
+        build_dir_abi = os.path.join(build_dir, make_varname(variant, abi))
         result = subprocess.run(
             [
                 ec.cmake_exe,
                 "-B", build_dir_abi,
                 "-S", project_dir,
                 "-G", "Ninja",
-                f"-DCMAKE_BUILD_TYPE={bc.build_type}",
+                f"-DCMAKE_BUILD_TYPE={variant}",
                 f"-DCMAKE_TOOLCHAIN_FILE={cmake_toolchain}",
                 f"-DCMAKE_MAKE_PROGRAM={ec.ninja_exe}",
                 f"-DCMAKE_SYSTEM_NAME=Android",
@@ -149,12 +147,12 @@ def configure(bc: Build, ec: Env):
         if result.returncode != 0:
             raise WorkError(f"CMake failed with code {result.returncode}")
 
-def clean(bc: Build, ec: Env):
+def clean(bc: Build, ec: Env, variant: str):
     project_dir = get_project_dir()
     build_dir = get_build_dir()
 
     for abi in bc.abis:
-        build_dir_abi = os.path.join(build_dir, abi)
+        build_dir_abi = os.path.join(build_dir, make_varname(variant, abi))
         result = subprocess.run(
             [
                 ec.cmake_exe,
@@ -165,11 +163,13 @@ def clean(bc: Build, ec: Env):
         if result.returncode != 0:
             raise WorkError(f"CMake failed with code {result.returncode}")
 
-def build(bc: Build, ec: Env):
+def build(bc: Build, ec: Env, variant: str):
     build_dir = get_build_dir()
 
     for abi in bc.abis:
-        build_dir_abi = os.path.join(build_dir, abi)
+        print_info(f"building for {variant.lower()} {abi}")
+
+        build_dir_abi = os.path.join(build_dir, make_varname(variant, abi))
         result = subprocess.run([ec.cmake_exe, "--build", build_dir_abi])
         if result.returncode != 0:
             raise WorkError(f"CMake failed with code {result.returncode}")
@@ -192,11 +192,14 @@ def main() -> int:
             "clean": clean,
             "build": build,
         }
+
+        is_release = "--release" in args[2:]
+        variant = "Release" if is_release else "Debug"
         
         cmd = commands.get(cmd_name)
         if cmd is not None:
             print_info(f"executing command '{cmd_name}'...")
-            cmd(bc, ec)
+            cmd(bc, ec, variant)
         else:
             raise WorkError(f"unknown command '{cmd_name}'")
     except WorkError as e:

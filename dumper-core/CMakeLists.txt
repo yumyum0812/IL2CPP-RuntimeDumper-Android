@@ -1,4 +1,4 @@
-set(LIB_NAME "dumper")
+set(LIB_NAME "dumper-core")
 
 add_library(${LIB_NAME} STATIC
         src/dumper.cpp

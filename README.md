@@ -1,30 +1,59 @@
 ## Description
-Runtime IL2CPP dumper for Android
+Runtime IL2CPP dumper for Android (armeabi-v7a, arm64-v8a)
+Including root, non-root methods
 
 ## Disclaimer
-This project is used for educational purposed only,
+This project is used for educational purposes only.
 Please use this project at your own risk. We accept no responsibility for any damages.
 
 ## Features
-- Dump classes, fields, properties, methods
-- Dump enum values
-- Dump generics of classes, methods
+- Dump name of classes, fields, properties, methods
+- Dump generic names of classes, methods
 - Dump custom attributes of classes, methods, fields, properties, parameters
 - Dump method RVAs, offsets
 - Dump instance field offsets
+- Dump enum values
 - Dump const field values
-- These are generated to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper/Dump/dump.cs`
 
-## Usage
-### By injection
-Build and load libdumper.so in your game by library injector or other tools.
-### By Zygisk module
-Build or download Zygisk module from release and install.
+## Installation
+### Method 1. By Zygisk module
+Download Zygisk module from release and install.
+### Method 2. By modding APK
+#### Pattern 1
+1. Extract your game APK
+2. Insert `libdumper-inject.so` to your game's matching `lib/<ARCH>` folder
+3. Add following smali code to `onCreate` of main activity in your game
+```smali
+const-string v0, "dumper-inject"
+
+invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
+```
+It should will be like this:
+```smali
+.method protected onCreate(Landroid/os/Bundle;)V
+    .locals 2
+
+    const-string v0, "dumper-inject"
+
+    invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
+    
+    # ...
+```
+#### Pattern 2
+1. Extract your game APK
+2. Replace `libmain.so` of your game's matching `lib/<ARCH>` folder
+3. Recompress + sign and install the modded APK
+### Method 3. By replacing games lib (ROOT)
+1. Replace `libmain.so` of your game's `/data/app/<PACKAGE>/base.apk`'s folder + `/lib/<ARCH>/libmain.so`
+### Method 4. By injection
+Inject `libdumper-inject.so` in your game by your library injector.
 
 ## Configuration
 ### Targeting
-You can add/remove target game packages by KernelSU Web UI. if you using classic magisk, install [KsuWebUI Standalone](https://github.com/adivenxnataly/KsuWebUI)
-### Adjusing
+You can add/remove target game packages by KernelSU Web UI.
+> [!TIP]
+> if you are using classic Magisk, install [KsuWebUI Standalone](https://github.com/adivenxnataly/KsuWebUI)
+### Adjusting
 When the targeted game launches first time after targeted, the configuration file `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper/dumper_config.json` will be generated.
 The configuration file has following keys.
 | Name | Type | Description |
@@ -32,16 +61,16 @@ The configuration file has following keys.
 | no_dump | bool | Disables dump operation |
 | lib_name | string | Dynamic library name of libil2cpp |
 | wait_time | int | Time of wait before dumping in seconds |
-| filter_assembly | bool | Filters assemblies to dump by names |
+| filter_assembly | bool | Filter assemblies to dump by names |
 | assembly_filter | [string] | Whitelist of assemblies to dump by names |
 | class_blacklist | [string] | Blacklist of classes to skip dumping by names |
 | trigger_by_hook | boolean | Hook a il2cpp api function and dump once when the that function was executed |
-| split_dump | boolean | Splits dump.cs for each assemblies |
+| split_dump | boolean | Splits dump.cs for each assembly |
 ### Mapping symbols
-You can add the following map files to map obfuscated symbols if you found. if would you add to like these, please create following file to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper`
+You can add the following map files to map obfuscated symbols if you found. if would you add to like these, you can create following files to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper`
 
 #### rva_map.json
-- Map of RVA offset and API symbol
+Map of RVA offset and API symbol
 ##### Example
 ```json
 [
@@ -49,11 +78,9 @@ You can add the following map files to map obfuscated symbols if you found. if w
     "il2cpp_yyyy": "0xABC123",
     ...
 ]
-...
-
 ```
 #### symbol_map.json
-- Map of obuscated / shuffled symbol and API symbol
+Map of obuscated / shuffled symbol and API symbol
 ##### Example
 ```json
 [
@@ -61,7 +88,6 @@ You can add the following map files to map obfuscated symbols if you found. if w
     "il2cpp_yyyy": "yjsnpi",
     ...
 ]
-...
 ```
 ### Patches
 You can add the following file to patch libil2cpp.so for specified offsets, bytes before dumping.
@@ -81,7 +107,10 @@ You can add the following file to patch libil2cpp.so for specified offsets, byte
 ]
 ```
 
-## Output example
+## Outputs
+Outputs are generated to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper/Dump/`
+
+### Example output
 ```cs
 // Namespace: UnityEngine
 [NativeClass("Rectf", "template<typename T> class RectT; typedef RectT<float> Rectf;")]
