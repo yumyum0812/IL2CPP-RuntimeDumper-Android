@@ -35,6 +35,7 @@
 #include "reflection_initer.h"
 #include "iteration_helper.h"
 #include "config.h"
+#include "environment.h"
 
 
 using namespace Api;
@@ -1050,11 +1051,10 @@ static std::string GetAppExtDir() {
     return extDir;
 }
 
-
 void RunDumper() {
     using namespace Api;
 
-    DumperLog::Debug("running...");
+    DumperLog::Debug("running... ({})", ARCH_NAME);
 
     auto extDirS = GetAppExtDir();
     if (extDirS.empty()) {
