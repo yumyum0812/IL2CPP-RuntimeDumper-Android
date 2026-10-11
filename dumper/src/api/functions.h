@@ -3,8 +3,9 @@
 #include <cstddef>
 #include <vector>
 #include <string>
-#include <format>
 #include <xdl.h>
+#include <android/log.h>
+#include "../dumper_log.h"
 
 namespace Api {
     struct Domain;
@@ -61,8 +62,9 @@ class Api::Functions {
         }
 
         R operator() (A... a) const {
-            if (!fn)
-                throw std::runtime_error(std::format("call to uninitialized api call: {}", _name));
+            if (!fn) {
+                DumperLog::Assert("fn == nullptr", "call to uninitialize api call: {}", _name);
+            }
             return fn(std::forward<A>(a)...);
         }
 
@@ -84,6 +86,7 @@ public:
 
     _API_FUNC(assembly_get_image, Image*(Assembly* assembly));
 
+    _API_FUNC(thread_current, Thread*());
     _API_FUNC(thread_attach, Thread*(Domain* domain));
     _API_FUNC(thread_detach, void(Thread* thread));
 

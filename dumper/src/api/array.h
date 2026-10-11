@@ -6,7 +6,7 @@ namespace Api {
     struct Array {
         Array() = delete;
         
-        int GetLength() {
+        inline int GetLength() {
             return Functions::array_length(this);
         }
     };

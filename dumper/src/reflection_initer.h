@@ -2,31 +2,31 @@
 #include "api/class.h"
 #include "api/image.h"
 #include "api/method.h"
-#include "log.h"
+#include "dumper_log.h"
 #include "reflection_methods.h"
 #include "finder.h"
 
 
 namespace ReflectionIniter {
-    Api::Class* FindReflClass(Api::Image* img, const std::string& ns, const std::string& name) {
+    inline Api::Class* FindReflClass(Api::Image* img, const std::string& ns, const std::string& name) {
         Api::Class* ret = img->FindClass(ns, name);
         if (!ret)
-            Log::Warn("class {}.{} not found", ns, name);
+            DumperLog::Warn("class {}.{} not found", ns, name);
 
         return ret;
     }
 
-    void FindReflMethod(Api::Class* klass, std::string_view name, std::string_view rt, const std::vector<std::string_view>& params, Api::Method** method, std::string_view debugSuffix = {}) {
+    inline void FindReflMethod(Api::Class* klass, std::string_view name, std::string_view rt, const std::vector<std::string_view>& params, Api::Method** method, std::string_view debugSuffix = {}) {
         if(!(*method = Finder::FindMethod(klass, name, rt, params)))
-            Log::Warn("method {}.{}{} not found", klass->GetName(), name, debugSuffix);
+            DumperLog::Warn("method {}.{}{} not found", klass->GetName(), name, debugSuffix);
     }
 
-    void InitUnityReflection() {
+    inline void InitUnityReflection() {
         using namespace ReflectionMethods;
 
         Api::Image* image = Finder::FindImage("UnityEngine.CoreModule.dll");
         if (!image) {
-            Log::Warn("image UnityEngine.CoreModule.dll not found");
+            DumperLog::Warn("image UnityEngine.CoreModule.dll not found");
             return;
         }
 
@@ -41,16 +41,16 @@ namespace ReflectionIniter {
         );
     }
 
-    int GetBoxSize(Api::Image* corlib) {
+    inline int GetBoxSize(Api::Image* corlib) {
         Api::Class* objC = FindReflClass(corlib, "System", "Object");
         if (!objC) return 0;
 
         int sz = objC->GetInstanceSize();
-        Log::Debug("object box size: 0x{:X}", sz);
+        DumperLog::Debug("object box size: 0x{:X}", sz);
         return sz;
     }
 
-    void InitReflection(Api::Image* corlib) {
+    inline void InitReflection(Api::Image* corlib) {
         using namespace ReflectionMethods;
 
         C_Type.klass = FindReflClass(corlib, "System", "Type");

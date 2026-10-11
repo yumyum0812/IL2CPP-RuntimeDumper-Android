@@ -4,11 +4,11 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <memory>
 #include <ostream>
 #include <sstream>
 #include <unordered_map>
 #include <dobby.h>
+#include <KittyMemory.hpp>
 
 #include "api/functions.h"
 #include "api/object.h"
@@ -29,7 +29,7 @@
 #include "utils/jni_util.h"
 #include "utils/str_util.h"
 #include "resolver.h"
-#include "log.h"
+#include "dumper_log.h"
 #include "formats.h"
 #include "reflection_methods.h"
 #include "reflection_initer.h"
@@ -41,10 +41,10 @@ using namespace Api;
 using namespace ReflectionMethods;
 namespace fs = std::filesystem;
 
-constexpr auto INDENT = "    ";
+static constexpr auto INDENT = "    ";
 
 
-const std::unordered_map<int, std::string> typeAliases = {
+static const std::unordered_map<int, std::string> typeAliases = {
     {TypeEnum::VOID, "void"},
     {TypeEnum::BOOLEAN, "bool"},
     {TypeEnum::CHAR, "char"},
@@ -64,50 +64,21 @@ const std::unordered_map<int, std::string> typeAliases = {
     {TypeEnum::OBJECT, "object"},
 };
 
-const std::unordered_map<int, std::string> typeSuffixes = {
+static const std::unordered_map<int, std::string> typeSuffixes = {
     {TypeEnum::SZARRAY, "[]"},
     {TypeEnum::PTR, "*"},
 };
 
 
-Config::DumperConfig config;
-std::filesystem::path outDir;
-LibResolver libRes;
+static Config::DumperConfig config;
+static std::filesystem::path outDir;
+static LibResolver libRes;
 
-uintptr_t libBase = 0;
-size_t structBoxSize = 0;
+static uintptr_t libBase = 0;
+static size_t structBoxSize = 0;
 
 
-std::string GetAppExtDir() {
-    JavaVM* vm = JniUtil::GetJavaVM();
-    if (!vm) {
-        Log::Error("cannot obtain JavaVM");
-        return "";
-    }
-
-    auto att = JniUtil::JniAttach(vm);
-    JNIEnv* env = att.Attach();
-    if (!env) {
-        Log::Error("cannot attach JNI");
-        return "";
-    }
-
-    auto app = JniUtil::GetApplication(env);
-    if (!app) {
-        Log::Error("cannot obtain Application");
-        return "";
-    }
-
-    auto extDir = JniUtil::GetExternalFilesPath(env, app);
-    if (extDir.empty()) {
-        Log::Error("cannot obtain externalFilesDir");
-        return "";
-    }
-
-    return extDir;
-}
-
-std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof = false) {
+static std::string FormatTypeName(Type* t, bool useRealName = false, bool forTypeof = false) {
     if (!t) return "?";
 
     auto klass = Class::FromType(t);
@@ -115,22 +86,20 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
 
     std::string res;
 
-    if (forDefinition) {
-        auto outer = klass->GetDeclaringClass();
-        if (outer)
-            res += FormatTypeName(outer->GetType(), forDefinition) + ".";
+    if (!useRealName) {
+        if (auto it = typeAliases.find(tp); it != typeAliases.end()) {
+            return it->second;
+        }
     }
+
+    auto outer = klass->GetDeclaringClass();
+    if (outer)
+        res += FormatTypeName(outer->GetType(), useRealName) + ".";
     
     if (typeSuffixes.contains(tp)) {
         auto ec = klass->GetElementClass();
         if (ec && ec != klass)
-            return res + FormatTypeName(ec->GetType(), forDefinition) + typeSuffixes.at(tp);
-    }
-    
-    if (!forDefinition) {
-        if (auto it = typeAliases.find(tp); it != typeAliases.end()) {
-            return it->second;
-        }
+            return res + FormatTypeName(ec->GetType(), useRealName) + typeSuffixes.at(tp);
     }
 
 
@@ -157,7 +126,7 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
                         auto p = C_Array.GetValue->Invoke(args, i);
                         auto pt = Class::FromSystemType(p);
                         auto ptC = pt->GetType();
-                        ps.push_back(FormatTypeName(ptC, forDefinition));
+                        ps.push_back(FormatTypeName(ptC, useRealName));
                     }
                     
                     return pureName + "<" + StrUtil::Join(ps, ", ") + ">";
@@ -169,7 +138,7 @@ std::string FormatTypeName(Type* t, bool forDefinition = false, bool forTypeof =
     return res + name;
 }
 
-std::string FormatTypeType(Class* klass) {
+static std::string FormatTypeType(Class* klass) {
     bool isValueType = klass->IsValueType();
     bool isEnum = klass->IsEnum();
     int flags = klass->GetFlags();
@@ -201,7 +170,7 @@ std::string FormatTypeType(Class* klass) {
     return out;
 }
 
-std::string FormatTypeAccessor(Class* klass) {
+static std::string FormatTypeAccessor(Class* klass) {
     int flags = klass->GetFlags();
 
     using namespace TypeAttributes;
@@ -227,7 +196,7 @@ std::string FormatTypeAccessor(Class* klass) {
     return "";
 }
 
-std::string FormatMethodAccessor(Method* met) {
+static std::string FormatMethodAccessor(Method* met) {
     int flags = met->GetFlags();
     
     using namespace MethodAttributes;
@@ -274,7 +243,7 @@ std::string FormatMethodAccessor(Method* met) {
     return out;
 }
 
-std::string FormatFieldAccessor(Field* fld) {
+static std::string FormatFieldAccessor(Field* fld) {
     using namespace FieldAttributes;
 
     std::string out;
@@ -311,7 +280,7 @@ std::string FormatFieldAccessor(Field* fld) {
     return out;
 }
 
-std::string FormatParamType(Type* typ) {
+static std::string FormatParamType(Type* typ) {
     int attrs = typ->GetAttrs();
     bool isByRef = typ->IsByRef();
 
@@ -323,12 +292,12 @@ std::string FormatParamType(Type* typ) {
     bool isIn  = (attrs & IN)  != 0;
 
     if (isByRef) {
-        if (isOut & isIn)
-            out += "ref ";
-        else if (isOut)
+        if (isOut && !isIn)
             out += "out ";
-        else if (isIn)
+        else if (isIn && !isOut)
             out += "in ";
+        else
+            out += "ref ";
             
     } else {
         if (isIn)  out += "[In] ";
@@ -341,7 +310,7 @@ std::string FormatParamType(Type* typ) {
 
 
 template <typename Getter>
-std::string FormatObjectCustom(int typeEnum, Getter&& getter) {
+static std::string FormatObject(int typeEnum, Getter&& getter) {
     using namespace TypeEnum;
 
     std::string out;
@@ -398,7 +367,7 @@ std::string FormatObjectCustom(int typeEnum, Getter&& getter) {
     return out;
 }
 
-std::string FormatObject(Object* obj) {
+static std::string FormatObjectValue(Object* obj) {
     using namespace TypeEnum;
 
     if (!obj)
@@ -418,7 +387,7 @@ std::string FormatObject(Object* obj) {
     if (klass->IsEnum())
         type = klass->GetEnumBaseType();
 
-    return FormatObjectCustom(
+    return FormatObject(
         type->GetTypeEnum(),
         [&]<typename T, bool unboxed>() -> T {
             if constexpr (!unboxed) {
@@ -429,7 +398,7 @@ std::string FormatObject(Object* obj) {
     );
 }
 
-std::string FormatFieldValue(Field* fld) {
+static std::string FormatFieldValue(Field* fld) {
     using namespace FieldAttributes;
 
     int flags = fld->GetFlags();
@@ -444,7 +413,7 @@ std::string FormatFieldValue(Field* fld) {
     if (klass->IsEnum())
         type = klass->GetEnumBaseType();
 
-    return " = " + FormatObjectCustom(
+    return " = " + FormatObject(
         type->GetTypeEnum(),
         [&]<typename T, bool>() -> T {
             return fld->GetStaticValue<T>();
@@ -452,7 +421,7 @@ std::string FormatFieldValue(Field* fld) {
     );
 }
 
-std::string FormatAttrTyped(Object* typed) {
+static std::string FormatAttrTyped(Object* typed) {
     if (!typed) return "?";
 
     void* typedUnbox = typed->Unbox();
@@ -484,16 +453,16 @@ std::string FormatAttrTyped(Object* typed) {
             if (k && C_CustomAttributeTypedArgument.klass->IsAssignableFrom(k))
                 valueFmts.push_back(FormatAttrTyped(vv));
             else
-                valueFmts.push_back(FormatObject(vv));
+                valueFmts.push_back(FormatObjectValue(vv));
         }
 
         return "new[] {" + StrUtil::Join(valueFmts, ", ") + "}";
     };
 
-    return FormatObject(v);
+    return FormatObjectValue(v);
 }
 
-bool CanDumpAttrs() {
+static bool CanDumpAttrs() {
     return C_CustomAttributeData.get_AttributeType &&
         C_CustomAttributeData.get_ConstructorArguments &&
         C_CustomAttributeData.get_NamedArguments &&
@@ -508,7 +477,7 @@ bool CanDumpAttrs() {
         );
 }
 
-void DumpAttrs(Object* attrsList, std::ostream& out, int indents, bool newLine, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
+static void DumpAttrs(Object* attrsList, std::ostream& out, int indents, bool newLine, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
     if (!CanDumpAttrs()) return;
 
     IterationHelper::IterateIList(attrsList, "System.Reflection.CustomAttributeData", [&] (Object* attr) {
@@ -582,7 +551,7 @@ void DumpAttrs(Object* attrsList, std::ostream& out, int indents, bool newLine, 
     });
 }
 
-void DumpMemberAttrs(Object* memberInfo, std::ostream& out, int ind = 1) {
+static void DumpMemberAttrs(Object* memberInfo, std::ostream& out, int ind = 1) {
     if (!memberInfo) return;
     if (!CanDumpAttrs()) return;
 
@@ -594,7 +563,7 @@ void DumpMemberAttrs(Object* memberInfo, std::ostream& out, int ind = 1) {
     DumpAttrs(attrs, out, ind, true);
 }
 
-void DumpParamAttrs(Object* paramInfo, std::ostream& out, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
+static void DumpParamAttrs(Object* paramInfo, std::ostream& out, const std::vector<std::pair<std::string, std::string>>& excludes = {}) {
     if (!paramInfo) return;
     if (!CanDumpAttrs()) return;
 
@@ -606,7 +575,7 @@ void DumpParamAttrs(Object* paramInfo, std::ostream& out, const std::vector<std:
     DumpAttrs(attrs, out, 0, false, excludes);
 }
 
-void DumpClass(Class* klass, std::ofstream& out) {
+static void DumpClass(Class* klass, std::ofstream& out) {
     if (config.classBlacklist.contains(klass->GetName())) return;
     
     out << "// Namespace: ";
@@ -652,7 +621,7 @@ void DumpClass(Class* klass, std::ofstream& out) {
         ext = " : " + StrUtil::Join(extNames, ", ");
     }
 
-    out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + " {";
+    out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + "\n{";
     out << "\n";
 
     auto fields = klass->GetFields();
@@ -799,10 +768,11 @@ void DumpClass(Class* klass, std::ofstream& out) {
                 DumpParamAttrs(obj, atts, excs);
                 s += atts.str();
 
-                bool isIn = (attrs & ParameterAttributes::IN) != 0;
-                bool isOut = (attrs & ParameterAttributes::OUT) != 0;
                 if (isByRef) {
-                    if (isIn && isOut) {
+                    bool isIn = (attrs & ParameterAttributes::IN) != 0;
+                    bool isOut = (attrs & ParameterAttributes::OUT) != 0;
+                    
+                    if (!isIn && !isOut) {
                         s += "ref ";
                     } else if (isIn) {
                         s += "in ";
@@ -817,7 +787,7 @@ void DumpClass(Class* klass, std::ofstream& out) {
 
                 if (hasDefValue) {
                     auto defO = vGetDefV->Invoke(obj);
-                    s += " = " + FormatObject(defO);
+                    s += " = " + FormatObjectValue(defO);
                 }
 
                 parFmts.push_back(s);
@@ -898,11 +868,11 @@ void DumpClass(Class* klass, std::ofstream& out) {
     out.flush();
 }
 
-void DumpAssembly(Assembly* a, std::ofstream& out) {
+static void DumpAssembly(Assembly* a, std::ofstream& out) {
     Image* img = a->GetImage();
     if (!img) return;
     
-    Log::Debug("dumping assembly: {}", img->GetName());
+    DumperLog::Debug("dumping assembly: {}", img->GetName());
 
     auto klasses = img->GetClasses();
     for (auto k : klasses) {
@@ -912,7 +882,7 @@ void DumpAssembly(Assembly* a, std::ofstream& out) {
     out.flush();
 }
 
-void DumpAssemblies(const std::vector<Assembly*> asms, std::ofstream& out) {
+static void DumpAssemblies(const std::vector<Assembly*> asms, std::ofstream& out) {
     for (auto a : asms) {
         Image* img = a->GetImage();
         if (!img) continue;
@@ -931,46 +901,52 @@ void DumpAssemblies(const std::vector<Assembly*> asms, std::ofstream& out) {
     }
 }
 
-void DumperMain(bool attachToThread) {
+static void DumperMain() {
     Domain* domain = Domain::GetInstance();
     if (!domain) {
-        Log::Error("cannot obtain domain");
+        DumperLog::Error("domain got null");
         return;
     }
-    Log::Debug("domain: 0x{:X}", (uintptr_t) domain);
+    DumperLog::Debug("domain: 0x{:X}", (uintptr_t) domain);
 
-    Thread* attached = nullptr;
-    if (attachToThread) {
-        attached = Thread::Attach(domain);
-        if (!attached) {
-            Log::Error("cannot attach thread");
+    Thread* thr = Thread::GetCurrent();
+    bool attached = thr != nullptr;
+    if (thr) {
+        DumperLog::Debug("already attached to il2cpp, skipping attach");
+    } else {
+        DumperLog::Debug("not attached to il2cpp, attaching...");
+
+        thr = Thread::Attach(domain);
+        if (!thr) {
+            DumperLog::Error("attach returned null");
             return;
         }
-        Log::Debug("attached thread: 0x{:X}", (uintptr_t) attached);
+        DumperLog::Error("attached to thread");
     }
+    DumperLog::Debug("thread: 0x{:X}", (uintptr_t) thr);
 
     Image* corlib = Image::GetCorlib();
     if (!corlib) {
-        Log::Error("cannot obtain corlib");
+        DumperLog::Error("cannot obtain corlib");
     } else {
         auto nm = corlib->GetName();
-        Log::Debug("corlib: {}", nm);
+        DumperLog::Debug("corlib: {}", nm);
 
         ReflectionIniter::InitReflection(corlib);
         ReflectionIniter::InitUnityReflection();
         structBoxSize = ReflectionIniter::GetBoxSize(corlib);
         
-        Log::Debug("initialized reflection");
+        DumperLog::Debug("initialized reflection methods");
     }
 
     if (C_UnityEngine.get_unityVersion) {
         auto verO = (String*) C_UnityEngine.get_unityVersion->Invoke(nullptr);
         auto ver = verO ? StrUtil::U16ToU8(verO->GetChars()) : "null";
-        Log::Debug("unity version: {}", ver);
+        DumperLog::Debug("unity version: {}", ver);
     }
 
     auto asms = domain->GetAssemblies();
-    Log::Debug("assemblies: {:d}", asms.size());
+    DumperLog::Debug("assemblies: {:d}", asms.size());
 
     if (config.filterAssembly) {
         std::erase_if(asms, [&](Assembly* item) {
@@ -980,14 +956,14 @@ void DumperMain(bool attachToThread) {
             return config.assmblyFilter.find(img->GetName()) == config.assmblyFilter.end();
         });
 
-        Log::Debug("filtered assemblies: {:d}", asms.size());
+        DumperLog::Debug("filtered assemblies: {:d}", asms.size());
     }
 
-    Log::Debug("dumping...");
+    DumperLog::Debug("dumping...");
     auto startTime = std::chrono::steady_clock::now();
 
     if (!config.classBlacklist.empty()) {
-        Log::Debug("blacklisted classes: {}", StrUtil::Join(config.classBlacklist, ", "));
+        DumperLog::Debug("blacklisted classes: {}", StrUtil::Join(config.classBlacklist, ", "));
     }
 
     if (!config.splitDump) {
@@ -995,14 +971,14 @@ void DumperMain(bool attachToThread) {
 
         DumpAssemblies(asms, out);
     } else {
-        fs::path dumpDir = outDir / "dump";
+        fs::path dumpDir = outDir / "DumpCs";
 
         for (auto a : asms) {
             Image* img = a->GetImage();
             if (!img) continue;
 
             if (!fs::exists(dumpDir) && !fs::create_directories(dumpDir)) {
-                Log::Debug("cannot create dir: {}", dumpDir.c_str());
+                DumperLog::Debug("cannot create dir: {}", dumpDir.c_str());
                 continue;
             }
 
@@ -1016,98 +992,148 @@ void DumperMain(bool attachToThread) {
 
     auto finishTime = std::chrono::steady_clock::now();
     float durationSec = std::chrono::duration<float>(finishTime - startTime).count();
-    Log::Debug("dump success ({:.3f}s)", durationSec);
-    Log::Debug("output dir: {}", outDir.c_str());
+    DumperLog::Debug("dump success ({:.3f}s)", durationSec);
+    DumperLog::Debug("output dir: {}", outDir.c_str());
 
-    if (attached) {
-        Log::Debug("detaching il2cpp...");
-        attached->Detach();
+    if (!attached) {
+        DumperLog::Debug("detaching il2cpp...");
+        thr->Detach();
     }
 
-    Log::Debug("all finished!");
-    Log::CloseFile();
+    DumperLog::Debug("all finished!");
+    DumperLog::CloseFile();
 }
 
 
-Object* (* Old_RuntimeInvoke)(Method* method, void*, void** args, Object** exc);
-Object* Hook_RuntimeInvoke(Method* method, void* obj, void** args, Object** exc) {
+static Object* (* Old_RuntimeInvoke)(Method* method, void* obj, void** args, Object** exc);
+static Object* Hook_RuntimeInvoke(Method* method, void* obj, void** args, Object** exc) {
     static bool dumpOnce = true;
     if (dumpOnce) {
         dumpOnce = false;
-        DumperMain(false);
+        DumperMain();
     }
     return Old_RuntimeInvoke(method, obj, args, exc);
+}
+
+
+static std::string GetAppExtDir() {
+    JavaVM* vm = JniUtil::GetJavaVM();
+    if (!vm) {
+        DumperLog::Error("cannot obtain JavaVM");
+        return "";
+    }
+
+    auto att = JniUtil::JniAttach(vm);
+    JNIEnv* env = att.Attach();
+    if (!env) {
+        DumperLog::Error("cannot attach JNI");
+        return "";
+    }
+
+    jobject app = nullptr;
+    int msElapsed = 0;
+    while (!(app = JniUtil::GetApplication(env))) {
+        if (msElapsed >= 10'000) {
+            DumperLog::Error("cannot obtain Applicaion object for 10 seconds");
+            return "";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        msElapsed += 100;
+    }
+
+    auto extDir = JniUtil::GetExternalFilesPath(env, app);
+    if (extDir.empty()) {
+        DumperLog::Error("failed externalFilesDir()");
+        return "";
+    }
+
+    return extDir;
 }
 
 
 void RunDumper() {
     using namespace Api;
 
-    Log::Debug("running...");
+    DumperLog::Debug("running...");
 
     auto extDirS = GetAppExtDir();
     if (extDirS.empty()) {
-        Log::Error("cannot obtain external files dir");
+        DumperLog::Error("cannot obtain external files dir");
         return;
     }
-    Log::Debug("obtained external files dir: {}", extDirS);
+    DumperLog::Debug("obtained external files dir: {}", extDirS);
     fs::path extDir(extDirS);
 
-    outDir = fs::path(extDirS) / "runtime-dumper";
+    auto dumperDir = fs::path(extDirS) / "RuntimeDumper";
+    outDir = dumperDir / "Dump";
     if (fs::exists(outDir)) {
         fs::remove_all(outDir);
-        Log::Debug("cleaned dir");
+        DumperLog::Debug("cleaned dir");
     }
     
     if (!fs::exists(outDir) && !fs::create_directories(outDir)) {
-        Log::Debug("cannot create dir: {}", outDir.c_str());
+        DumperLog::Error("cannot create dir: {}", outDir.c_str());
         return;
     }
 
     fs::path logPath = outDir / "log.txt";
-    Log::SetFile(logPath);
-    Log::Debug("initialized log file");
+    DumperLog::SetFile(logPath);
+    DumperLog::Debug("initialized log file");
 
     try {
-        config = Config::DumperConfig::Load(extDir / "dumper_config.json");
+        config = Config::DumperConfig::Load(dumperDir / "dumper_config.json");
     } catch (const std::exception& e) {
-        Log::Debug("failed to load config.json: {}", e.what());
+        DumperLog::Debug("failed to load dumper config: {}", e.what());
         return;
     }
-    Log::Debug("loaded config.json");
+    DumperLog::Debug("loaded dumper config");
 
-    Log::Debug("sleeping... ({:d}s)", config.sleepTime);
-    std::this_thread::sleep_for(std::chrono::seconds(config.sleepTime));
+    if (config.noDump) {
+        DumperLog::Debug("no dumping is enabled, aborting...");
+        return;
+    }
 
     libRes = LibResolver(config.libName);
-    auto res = Config::GetApiResolver(extDir);
-    auto staticWriteMap = Config::GetStaticWriteMap(extDir);
-
-    if (!res) {
-        Log::Error("cannot create api resolver");
+    ApiResolver res;
+    try {
+        res = Config::LoadApiResolver(dumperDir);
+    } catch (const std::runtime_error& e) {
+        DumperLog::Error("failed to create api resovler: {}", e.what());
         return;
     }
 
-    bool init = InitApi(libRes, *res);
+    std::vector<Config::PatchInfo> patches;
+    try {
+        patches = Config::LoadPatches(dumperDir);
+    } catch (const std::runtime_error& e) {
+        DumperLog::Error("failed to load patches: {}", e.what());
+        return;
+    }
+
+    bool init = InitApi(libRes, res);
     if (!init) {
-        Log::Error("initialization failed");
+        DumperLog::Error("api init failed");
         return;
     }
 
     libBase = libRes.GetBaseAddress();
+    DumperLog::Debug("libil2cpp base: 0x{:X}", libBase);
 
-    for (auto [offset, value] : staticWriteMap) {
-        Log::Debug("writing offset 0x{:X}: 0x{:X}", offset, value);
-        *(uintptr_t*)(libBase + offset) = value;
-        Log::Debug("wrote value to offset 0x{:X}", offset);
+    DumperLog::Debug("waiting... ({:d}s)", config.waitTime);
+    std::this_thread::sleep_for(std::chrono::seconds(config.waitTime));
+
+    for (const auto& p : patches) {
+        DumperLog::Debug("writing patch: 0x{:X}, {} bytes", p.offset, p.bytes.size());
+        KittyMemory::memWrite(libBase + p.offset, p.bytes.data(), p.bytes.size());
+        DumperLog::Debug("wrote {} bytes", p.bytes.size());
     }
 
     if (config.triggerByHook) {
-        Log::Debug("trigger by hook is enabled");
-        Log::Debug("hooking runtime_invoke...");
+        DumperLog::Debug("trigger by hook is enabled");
+        DumperLog::Debug("hooking il2cpp_runtime_invoke...");
         DobbyHook((void*) Api::Functions::runtime_invoke.GetPointer(), (void*) Hook_RuntimeInvoke, (void**) &Old_RuntimeInvoke);
-        Log::Debug("hooked runtime_invoke");
+        DumperLog::Debug("hooked il2cpp_runtime_invoke");
     } else {
-        DumperMain(true);
+        DumperMain();
     }
 }

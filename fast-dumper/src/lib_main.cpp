@@ -1,13 +1,8 @@
 #include <thread>
 #include "dumper.h"
 
-
-void ThreadMain() {
-    RunDumper();
-}
-
 __attribute__((constructor))
 void LibMain() {
-    auto t = std::thread(ThreadMain);
+    auto t = std::thread(RunDumper);
     t.detach();
 }

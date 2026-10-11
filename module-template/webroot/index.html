@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RuntimeDumper Config</title>
+  <link rel="stylesheet" href="ext/pico.classless.slate.min.css">
+</head>
+<body style="margin: 0; height: 100dvh; overflow: hidden;">
+  <main style="height: 100%; display: flex; flex-direction: column; min-height: 0;">
+    <header style="flex-shrink: 0;">
+      <h2>Runtime Dumper</h2>
+    </header>
+
+    <article style="flex-shrink: 0;">
+      <h4 style="flex-shrink: 0;">Add Package</h4>
+      <form id="addForm">
+        <input
+          id="packageName"
+          type="text"
+          placeholder="com.example.app"
+          autocomplete="off">
+        <button type="submit">Add package</button>
+      </form>
+
+      <small id="message" role="status">Initializing...</small>
+    </article>
+
+    <article style="flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box;">
+      <h4 style="flex-shrink: 0;">Registered packages</h4>
+      <div style="flex: 1; min-height: 0; overflow: auto;">
+        <table>
+          <tbody id="packageList">
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>

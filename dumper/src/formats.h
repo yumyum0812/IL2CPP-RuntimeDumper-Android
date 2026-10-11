@@ -4,7 +4,7 @@
 #include <format>
 
 namespace Formats {
-    const static std::map<char, std::string> charEscapes = {
+    inline const static std::map<char, std::string> charEscapes = {
         {'\\', "\\\\"},
         {'\n', "\\n"},
         {'\0', "\\0"},
@@ -16,7 +16,7 @@ namespace Formats {
         {'\v', "\\v"}
     };
 
-    std::string FormatCharLiteral(uint16_t c) {
+    inline std::string FormatCharLiteral(uint16_t c) {
         std::string out;
         if (charEscapes.contains(c)) {
             out += charEscapes.at(static_cast<char>(c));
@@ -33,7 +33,7 @@ namespace Formats {
         return "'" + out + "'";
     }
 
-    std::string FormalStringLiteral(std::string_view input) {
+    inline std::string FormalStringLiteral(std::string_view input) {
         std::string result;
         for (char c : input) {
             if (charEscapes.contains(c)) {
@@ -54,12 +54,12 @@ namespace Formats {
     }
 
     template <std::integral T>
-    std::string FormatInteger(T value) {
+    inline std::string FormatInteger(T value) {
         return std::format("{:d}", value);
     }
 
     template <std::floating_point T>
-    std::string FormatFloat(T value) {
+    inline std::string FormatFloat(T value) {
         auto s = std::format("{}", value);
         if (!s.empty() &&
             std::all_of(s.begin() + (s.front() == '-' ? 1 : 0), s.end(), [](unsigned char c) {
@@ -71,7 +71,7 @@ namespace Formats {
     }
 
     template <std::integral T>
-    std::string FormatOffset(T value) {
+    inline std::string FormatOffset(T value) {
         if (value < 0) {
             using U = std::make_unsigned_t<T>;
             const auto magnitude = U{0} - static_cast<U>(value);

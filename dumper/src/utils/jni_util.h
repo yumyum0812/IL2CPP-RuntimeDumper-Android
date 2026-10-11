@@ -4,7 +4,6 @@
 #include <xdl.h>
 #include <string>
 
-
 namespace JniUtil {
     class JniAttach {
         JavaVM* vm = nullptr;

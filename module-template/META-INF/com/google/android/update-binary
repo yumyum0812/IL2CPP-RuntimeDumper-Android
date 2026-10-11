@@ -1,0 +1,9 @@
+MAGISK_VER=$(magisk -v 2>/dev/null | cut -d: -f1)
+
+if [ -z "$MAGISK_VER" ]; then
+    ui_print "- Installing module..."
+    magisk --install-module "$3"
+else
+    ui_print "- Magisk/Kitsune Environment Detected"
+    magisk --install-module "$3"
+fi

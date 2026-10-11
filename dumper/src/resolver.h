@@ -1,23 +1,26 @@
 #pragma once
 #include <cstdint>
+#include <dlfcn.h>
+#include <limits>
 #include <thread>
 #include <map>
 #include <xdl.h>
 #include "api/functions.h"
 #include "utils/address.h"
-#include "log.h"
+#include "dumper_log.h"
 
 
 class LibResolver {
-    inline constexpr static uintptr_t ADDR_INVALID = UINTPTR_MAX;
+    inline constexpr static uintptr_t INVALID_ADDR = std::numeric_limits<uintptr_t>::max();
 
     struct LoadSegment {
-        uintptr_t vaddr;
-        uintptr_t offset;
-        uintptr_t filesz;
+        uintptr_t vaddr{};
+        uintptr_t offset{};
+        uintptr_t memsz{};
+        uintptr_t filesz{};
     };
 
-    std::string libName = "libil2cpp.so";
+    std::string libName = "";
     void* handle = nullptr;
     uintptr_t base = 0;
     std::vector<LoadSegment> segments;
@@ -27,15 +30,17 @@ class LibResolver {
     }
 
 public:
-    LibResolver(std::string_view libName = "") {
+    LibResolver(std::string_view libName = "libil2cpp.so") {
         this->libName = libName;
     }
 
     bool Resolve() {
+        DumperLog::Debug("resolver: resolving library {}", libName);
+
         int elapsedMs = 0;
         while (!(handle = FindHandle())) {
-            if (elapsedMs >= 30'000) {
-                Log::Debug("resolver: library {} not found for 30 seconds", libName);
+            if (elapsedMs >= 20'000) {
+                DumperLog::Error("resolver: library {} not found for 20 seconds", libName);
                 return false;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -48,35 +53,51 @@ public:
 
         for (size_t i = 0; i < info.dlpi_phnum; ++i) {
             const auto& ph = info.dlpi_phdr[i];
-            if (ph.p_type != PT_LOAD || ph.p_filesz == 0)
+            if (ph.p_type != PT_LOAD || !ph.p_memsz)
                 continue;
 
             segments.push_back({
-                static_cast<uintptr_t>(ph.p_vaddr),
-                static_cast<uintptr_t>(ph.p_offset),
-                static_cast<uintptr_t>(ph.p_filesz)
+                (uintptr_t) ph.p_vaddr,
+                (uintptr_t) ph.p_offset,
+                (uintptr_t) ph.p_memsz,
+                (uintptr_t) ph.p_filesz,
             });
         }
 
         return true;
     }
 
-    uintptr_t RvaToOffset(uintptr_t rva) {
-        rva = NormalizePointer(rva);
-        
+    uintptr_t RvaToOffset(uintptr_t rva) const {
         for (const auto& seg : segments) {
-            if (rva >= seg.vaddr && rva < seg.vaddr + seg.filesz) {
+            if (rva >= seg.vaddr && rva < seg.vaddr + seg.memsz) {
                 return rva - seg.vaddr + seg.offset;
             }
         }
-        return ADDR_INVALID;
+        return INVALID_ADDR;
     }
 
-    uintptr_t GetBaseAddress() {
+    uintptr_t OffsetToRva(uintptr_t offset) const {
+        for (const auto& seg : segments) {
+            if (offset >= seg.offset && offset < seg.offset + seg.memsz) {
+                return offset - seg.offset + seg.vaddr;
+            }
+        }
+        return INVALID_ADDR;
+    }
+
+    bool HasRva(uintptr_t rva) const {
+        for (const auto& seg : segments) {
+            if (rva >= seg.vaddr && rva < seg.vaddr + seg.memsz)
+                return true;
+        }
+        return false;
+    }
+
+    uintptr_t GetBaseAddress() const {
         return base;
     }
 
-    void* ResolveSymbol(const std::string& name) {
+    void* ResolveSymbol(const std::string& name) const {
         auto s = xdl_sym(handle, name.c_str(), nullptr);
         if (s) return s;
 
@@ -87,31 +108,39 @@ public:
 
 class ApiResolver {
 public:
-    ApiResolver() = default;
-    virtual ~ApiResolver() = default;
-    virtual void Resolve(LibResolver& lf, const std::vector<Api::IApiCall*>& calls) = 0;
-};
-
-
-class SymApiResolver : public ApiResolver {
     std::map<std::string, std::string> symbolMap;
-
-public:
-    SymApiResolver(const std::map<std::string, std::string>& symbolMap = {}) {
-        this->symbolMap = symbolMap;
-    }
-
-    void Resolve(LibResolver& lf, const std::vector<Api::IApiCall*>& calls) override {
+    std::map<std::string, size_t> rvaMap;
+    
+    ApiResolver() = default;
+    
+    void Resolve(const LibResolver& lr, const std::vector<Api::IApiCall*>& calls) {
         for (auto f : calls) {
-            auto funcName = f->Name();
+            auto origSym = f->Name();
+            if (!rvaMap.contains(origSym))
+                continue;
 
-            auto symName = funcName;
-            if (this->symbolMap.contains(funcName))
-                symName = this->symbolMap.at(funcName);
+            size_t rva = rvaMap.at(origSym);
+            if (!lr.HasRva(rva)) {
+                DumperLog::Warn("apiresolver: rva out of range for {}: 0x{:X}", origSym, rva);
+                continue;
+            }
+            uintptr_t addr = lr.GetBaseAddress() + rva;
+            f->Assign((void*) addr);
+        }
 
-            void* ptr = lf.ResolveSymbol(symName);
+        for (auto f : calls) {
+            if (f->Valid())
+                continue;
+
+            auto origSym = f->Name();
+
+            auto mappedSym = origSym;
+            if (this->symbolMap.contains(origSym))
+                mappedSym = this->symbolMap.at(origSym);
+
+            void* ptr = lr.ResolveSymbol(mappedSym);
             if (!ptr) {
-                Log::Debug("apiresolver: symbol not found for {}: {}", funcName, symName);
+                DumperLog::Warn("apiresolver: symbol not found for {}: {}", origSym, mappedSym);
                 continue;
             }
             f->Assign(ptr);
@@ -119,49 +148,28 @@ public:
     }
 };
 
-class RvaApiResolver : public ApiResolver {
-    std::map<std::string, size_t> offMap;
 
-public:
-    RvaApiResolver(const std::map<std::string, size_t>& offMap = {}) {
-        this->offMap = offMap;
-    }
-
-    void Resolve(LibResolver& lf, const std::vector<Api::IApiCall*>& calls) override {
-        for (auto f : calls) {
-            auto funcName = f->Name();
-            if (!offMap.contains(funcName)) {
-                Log::Debug("apiresolver: offset not found for {}", funcName);
-                continue;
-            }
-            uintptr_t addr = lf.GetBaseAddress() + offMap.at(funcName);
-            f->Assign((void*) addr);
-        }
-    }
-};
-
-
-bool InitApi(LibResolver& libRes, ApiResolver& res) {
-    Log::Debug("init: resolving library...");
+inline bool InitApi(LibResolver& libRes, ApiResolver& res) {
+    DumperLog::Debug("init: resolving library...");
     if (!libRes.Resolve()) {
-        Log::Debug("init: failed to resolve library");
+        DumperLog::Debug("init: failed to resolve library");
     }
     
-    Log::Debug("init: resolving api...");
+    DumperLog::Debug("init: resolving api...");
     res.Resolve(libRes, Api::Functions::GetCalls());
 
     bool ok = true;
     for (auto f : Api::Functions::GetCalls()) {
         if (!f->Valid()) {
-            Log::Debug("init: function not initialized: {}", f->Name());
+            DumperLog::Error("init: function not initialized: {}", f->Name());
             ok = false;
         }
     }
 
     if (!ok) {
-        Log::Debug("init: not all needed functions initialized!");
+        DumperLog::Error("init: not all needed functions initialized!");
     } else {
-        Log::Debug("init: initialized needed functions");
+        DumperLog::Debug("init: initialized needed functions");
     }
 
     return ok;

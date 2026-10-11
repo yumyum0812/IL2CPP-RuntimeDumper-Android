@@ -2,13 +2,16 @@
 #include <fstream>
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
+#include "nlohmann/json_fwd.hpp"
 #include "resolver.h"
 
 
 namespace Config {
     struct DumperConfig {
+        bool noDump = false;
         std::string libName = "libil2cpp.so";
-        int sleepTime = 5;
+        int waitTime = 5;
         bool filterAssembly = false;
         std::set<std::string> assmblyFilter;
         std::set<std::string> classBlacklist;
@@ -24,8 +27,9 @@ namespace Config {
 
     public:
         static void FromJson(const nlohmann::ordered_json& j, DumperConfig& config) {
+            Extract(j, "no_dump", config.noDump);
             Extract(j, "lib_name", config.libName);
-            Extract(j, "sleep_time", config.sleepTime);
+            Extract(j, "wait_time", config.waitTime);
             Extract(j, "filter_assembly", config.filterAssembly);
             Extract(j, "assmbly_filter", config.assmblyFilter);
             Extract(j, "trigger_by_hook", config.triggerByHook);
@@ -35,8 +39,9 @@ namespace Config {
 
         nlohmann::ordered_json ToJson() {
             return {
+                {"no_dump", noDump},
                 {"lib_name", libName},
-                {"sleep_time", sleepTime},
+                {"wait_time", waitTime},
                 {"filter_assembly", filterAssembly},
                 {"assmbly_filter", assmblyFilter},
                 {"trigger_by_hook", triggerByHook},
@@ -55,7 +60,7 @@ namespace Config {
                 file >> j;
 
                 bool missing = false;
-                for (const auto& key : {"lib_name", "filter_assembly", "assmbly_filter", "trigger_by_hook", "class_blacklist", "sleep_time", "split_dump"}) {
+                for (const auto& key : {"no_dump", "lib_name", "filter_assembly", "assmbly_filter", "trigger_by_hook", "class_blacklist", "wait_time", "split_dump"}) {
                     if (j.contains(key)) continue;
                     missing = true;
                     break;
@@ -66,6 +71,7 @@ namespace Config {
                 if (missing) {
                     std::ofstream out(path);
                     out << config.ToJson().dump(4) << '\n';
+                    DumperLog::Debug("created dumper config", path.filename().string());
                 }
             } else {
                 std::ofstream out(path);
@@ -76,127 +82,190 @@ namespace Config {
         }
     };
 
-    std::unique_ptr<ApiResolver> GetApiResolver(const std::filesystem::path& extDir) {
-        auto mapFileP = extDir / "symbol_map.txt";
-        auto rvaFileP = extDir / "rva_map.txt";
+    inline int ParseJsonInt(nlohmann::json v) {
+        if (v.is_number_integer())
+            return v.get<int>();
 
-        if (std::filesystem::exists(mapFileP)) {
-            std::map<std::string, std::string> symMap;
-            Log::Debug("symbol_map.txt found");
-
-            std::ifstream mapF(mapFileP);
-
-            std::string line;
-            while (std::getline(mapF, line)) {
-                std::istringstream ss(line);
-
-                std::string key;
-                std::string value;
-                ss >> key >> value;
-
-                if (key.empty()) {
-                    Log::Debug("key is empty");
-                    continue;
-                }
-                if (value.empty()) {
-                    Log::Debug("value is empty");
-                    continue;
-                }
-
-                symMap[key] = value;
+        if (v.is_string()) {
+            std::string value = v.get<std::string>();
+            std::size_t pos = 0;
+            
+            int n;
+            try {
+                n = std::stoi(value, &pos, 0);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::format("invalid integer: {}", e.what()));
             }
 
-            Log::Debug("loaded {:d} keys", symMap.size());
-            return std::make_unique<SymApiResolver>(symMap);
-        }
-
-        if (std::filesystem::exists(rvaFileP)) {
-            std::map<std::string, size_t> offMap;
-            Log::Debug("rva_map.txt found");
-
-            std::ifstream mapF(rvaFileP);
-
-            std::string line;
-            while (std::getline(mapF, line)) {
-                std::istringstream ss(line);
-
-                std::string key;
-                std::string value;
-                ss >> key >> value;
-
-                if (key.empty()) {
-                    Log::Debug("key is empty");
-                    continue;
-                }
-                if (value.empty()) {
-                    Log::Debug("value is empty");
-                    continue;
-                }
-
-                try {
-                    auto offset = static_cast<size_t>(std::stoull(value, nullptr, 16));
-                    offMap[key] = offset;
-                } catch (const std::exception& e) {
-                    Log::Debug("invalid offset for {}: {}", key, value);
-                    return nullptr;
-                }
+            if (pos != value.size()) {
+                throw std::runtime_error("invalid integer");
             }
 
-            Log::Debug("loaded {:d} keys", offMap.size());
-            return std::make_unique<RvaApiResolver>(offMap);
+            return n;
         }
 
-        return std::make_unique<SymApiResolver>();
+        throw std::runtime_error(std::format("invalid value type: {}", v.type_name()));
     }
 
-    std::map<uintptr_t, uintptr_t> GetStaticWriteMap(const std::filesystem::path& extDir) {
-        auto mapFileP = extDir / "static_write_map.txt";
+    inline std::vector<uint8_t> ParseHexBytes(std::string_view hex) {
+        std::vector<uint8_t> result;
 
-        if (std::filesystem::exists(mapFileP)) {
-            std::map<uintptr_t, uintptr_t> out;
-            Log::Debug("static_write_map.txt found");
+        std::string compact;
+        compact.reserve(hex.size());
 
-            std::ifstream mapF(mapFileP);
+        for (char c : hex) {
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                continue;
+            }
+            compact.push_back(c);
+        }
 
-            std::string line;
-            while (std::getline(mapF, line)) {
-                std::istringstream ss(line);
+        if (compact.size() % 2 != 0) {
+            throw std::invalid_argument("hex string is odd");
+        }
 
-                std::string key;
-                std::string value;
-                ss >> key >> value;
+        result.reserve(compact.size() / 2);
 
-                if (key.empty()) {
-                    Log::Debug("key is empty");
-                    continue;
-                }
-                if (value.empty()) {
-                    Log::Debug("value is empty");
-                    continue;
-                }
+        for (std::size_t i = 0; i < compact.size(); i += 2) {
+            uint8_t byte = 0;
 
-                size_t offset = 0;
-                try {
-                    offset = static_cast<size_t>(std::stoull(key, nullptr, 16));
-                } catch (const std::exception& e) {
-                    Log::Debug("invalid write offset: {}", key);
-                    return {};
-                }
+            auto first = compact.data() + i;
+            auto last  = first + 2;
 
-                uintptr_t val = 0;
-                try {
-                    val = static_cast<size_t>(std::stoull(value, nullptr, 16));
-                } catch (const std::exception& e) {
-                    Log::Debug("invalid write value for 0x{:X}: {}", offset, value);
-                    return {};
-                }
+            unsigned int value = 0;
+            auto [ptr, ec] = std::from_chars(first, last, value, 16);
 
-                out[offset] = val;
+            if (ec != std::errc{} || ptr != last || value > 0xFF) {
+                throw std::invalid_argument("invalid hex string: position " + std::to_string(i));
             }
 
-            Log::Debug("loaded {:d} static write offsets", out.size());
-            return out;
+            byte = static_cast<uint8_t>(value);
+            result.push_back(byte);
         }
-        return {};
+
+        return result;
+    }
+
+    struct PatchInfo {
+        size_t offset{};
+        std::vector<uint8_t> bytes{};
+
+        static PatchInfo Load(const nlohmann::json& j) {
+            try {
+                if (!j.is_object()) {
+                    throw std::runtime_error(std::format("root must be root"));
+                }
+
+                auto offV = j.at("offset");
+                auto hexS = j.at("bytes").get<std::string>();
+
+                int off = ParseJsonInt(offV);
+                std::vector<uint8_t> bytes = ParseHexBytes(hexS);
+
+                PatchInfo p;
+                p.offset = off;
+                p.bytes = bytes;
+
+                return p;
+            } catch (const nlohmann::json::exception& e) {
+                throw std::runtime_error(std::format("failed to format: {}", e.what()));
+            }
+        }
+    };
+
+    inline ApiResolver LoadApiResolver(const std::filesystem::path& dir) {
+        auto symMapP = dir / "symbol_map.json";
+        auto rvaMapP = dir / "rva_map.json";
+
+        ApiResolver ar;
+
+        if (std::filesystem::exists(symMapP)) {
+            std::map<std::string, std::string> result;
+            DumperLog::Debug("symbol_map.json found");
+
+            std::ifstream f(symMapP);
+
+            nlohmann::json j;
+
+            try {
+                f >> j;
+            } catch (const nlohmann::json::exception& e) {
+                throw std::runtime_error(std::format("failed to parse: {}", e.what()));
+            }
+
+            if (!j.is_object()) {
+                throw std::runtime_error("root must be an object");
+            }
+
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                if (it.value().is_string()) {
+                    result[it.key()] = it.value().get<std::string>();
+                } else {
+                    throw std::runtime_error("invalid value type: " + it.key());
+                }
+            }
+
+            ar.symbolMap = result;
+            DumperLog::Debug("symbol map: loaded {:d} keys", result.size());
+        }
+
+        if (std::filesystem::exists(rvaMapP)) {
+            std::map<std::string, size_t> result;
+            DumperLog::Debug("rva_map.json found");
+
+            std::ifstream f(rvaMapP);
+
+            nlohmann::json j;
+
+            try {
+                f >> j;
+            } catch (const nlohmann::json::exception& e) {
+                throw std::runtime_error(std::format("failed to parse: {}", e.what()));
+            }
+
+            if (!j.is_object()) {
+                throw std::runtime_error("root must be an object");
+            }
+
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                result[it.key()] = ParseJsonInt(it.value());
+            }
+
+            DumperLog::Debug("symbol map: loaded {:d} keys", result.size());
+            ar.rvaMap = result;
+        }
+
+        return ar;
+    }
+
+    inline std::vector<PatchInfo> LoadPatches(const std::filesystem::path& dir) {
+        auto mapFileP = dir / "patches.json";
+
+        if (!std::filesystem::exists(mapFileP)) {
+            return {};
+        }
+    
+        DumperLog::Debug("patches.txt found");
+
+        std::ifstream mapF(mapFileP);
+        nlohmann::json j;
+        try {
+            mapF >> j;
+        } catch (const nlohmann::json::exception& e) {
+            throw std::runtime_error(std::format("failed to parse: {}", e.what()));
+        }
+
+        if (!j.is_array()) {
+            throw std::runtime_error("root must be an array");
+        }
+
+        std::vector<PatchInfo> out;
+        for (std::size_t i = 0; i < j.size(); ++i) {
+            auto p = PatchInfo::Load(j[i]);
+            out.push_back(p);
+        }
+
+        DumperLog::Debug("loaded {:d} patches", out.size());
+        return out;
     }
 }

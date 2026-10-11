@@ -7,6 +7,10 @@
 namespace Api {
     struct Thread {
         Thread() = delete;
+
+        static Thread* GetCurrent() {
+            return Functions::thread_current();
+        }
         
         static Thread* Attach(Domain* domain) {
             return Functions::thread_attach(domain);

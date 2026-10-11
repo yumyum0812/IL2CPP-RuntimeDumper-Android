@@ -1,5 +1,5 @@
 ## Description
-Runtime IL2CPP dumper for Android arm64
+Runtime IL2CPP dumper for Android
 
 ## Disclaimer
 This project is used for educational purposed only,
@@ -7,37 +7,78 @@ Please use this project at your own risk. We accept no responsibility for any da
 
 ## Features
 - Dump classes, fields, properties, methods
-- Dump generic classe, method names
+- Dump enum values
+- Dump generics of classes, methods
 - Dump custom attributes of classes, methods, fields, properties, parameters
 - Dump method RVAs, offsets
-- Dump field offsets
-- Dump const values
-- These are generated to `/storage/emulated/0/Android/data/<PACKAGE>/files/runtime-dumper/dump.cs`
-
-## Unsupported features
-- Offset of static fields
-- Offsets and RVAs of generic inst methods
+- Dump instance field offsets
+- Dump const field values
+- These are generated to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper/Dump/dump.cs`
 
 ## Usage
+### By injection
 Build and load libdumper.so in your game by library injector or other tools.
+### By Zygisk module
+Build or download Zygisk module from release and install.
 
 ## Configuration
-You can add these map files to find obfuscated symbol. if would you add to like these, please put on `/storage/emulated/0/Android/data/<PACKAGE>/files/`
+### Targeting
+You can add/remove target game packages by KernelSU Web UI. if you using classic magisk, install [KsuWebUI Standalone](https://github.com/adivenxnataly/KsuWebUI)
+### Adjusing
+When the targeted game launches first time after targeted, the configuration file `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper/dumper_config.json` will be generated.
+The configuration file has following keys.
+| Name | Type | Description |
+| --- | --- | --- |
+| no_dump | bool | Disables dump operation |
+| lib_name | string | Dynamic library name of libil2cpp |
+| wait_time | int | Time of wait before dumping in seconds |
+| filter_assembly | bool | Filters assemblies to dump by names |
+| assembly_filter | [string] | Whitelist of assemblies to dump by names |
+| class_blacklist | [string] | Blacklist of classes to skip dumping by names |
+| trigger_by_hook | boolean | Hook a il2cpp api function and dump once when the that function was executed |
+| split_dump | boolean | Splits dump.cs for each assemblies |
+### Mapping symbols
+You can add the following map files to map obfuscated symbols if you found. if would you add to like these, please create following file to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper`
 
-### rva_map.txt
+#### rva_map.json
 - Map of RVA offset and API symbol
-#### Example
-```
-il2cpp_xxxx 0xABCDEF
+##### Example
+```json
+[
+    "il2cpp_xxxx": 123456,
+    "il2cpp_yyyy": "0xABC123",
+    ...
+]
 ...
 
 ```
-### symbol_map.txt
+#### symbol_map.json
 - Map of obuscated / shuffled symbol and API symbol
-#### Example
-```
-il2cpp_xxxx abcdefgh
+##### Example
+```json
+[
+    "il2cpp_xxxx": "abcdef",
+    "il2cpp_yyyy": "yjsnpi",
+    ...
+]
 ...
+```
+### Patches
+You can add the following file to patch libil2cpp.so for specified offsets, bytes before dumping.
+#### patches.json
+##### Example
+```json
+[
+    {
+        "offset": "0x893893",
+        "bytes": "11 45 14 19"
+    },
+    {
+        "offset": 123456,
+        "bytes": "AB CD EF 99"
+    },
+    ...
+]
 ```
 
 ## Output example

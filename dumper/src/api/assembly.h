@@ -6,7 +6,7 @@ namespace Api {
     struct Assembly {
         Assembly() = delete;
         
-        Image* GetImage() {
+        inline Image* GetImage() {
             return Functions::assembly_get_image(this);
         }
     };

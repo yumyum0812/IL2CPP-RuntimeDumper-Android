@@ -4,24 +4,24 @@
 #include "api/class.h"
 
 namespace ReflectionMethods {
-    struct {
+    inline struct {
         Api::Method* get_unityVersion{};
     } C_UnityEngine;
 
-    struct {
+    inline struct {
         Api::Method* GetValue;
     } C_Array;
 
-    struct {
+    inline struct {
         Api::Method* get_Count{};
     } C_ICollection;
 
-    struct {
+    inline struct {
         Api::Class* klass{};
         Api::Method* get_Item{};
     } C_IList;
 
-    struct {
+    inline struct {
         Api::Class* klass{};
         Api::Method* GetGenericArguments{};
         Api::Method* GetField{};
@@ -29,16 +29,16 @@ namespace ReflectionMethods {
         Api::Method* GetInterfaces{};
     } C_Type;
 
-    struct {
+    inline struct {
         Api::Method* GetGenericArguments{};
         Api::Method* GetParameters{};
     } C_MethodBase;
 
-    struct {
+    inline struct {
         Api::Method* get_Name{};
     } C_MemberInfo;
 
-    struct {
+    inline struct {
         Api::Method* GetCustomAttributesM{};
         Api::Method* GetCustomAttributesP{};
         Api::Method* get_AttributeType{};
@@ -46,18 +46,18 @@ namespace ReflectionMethods {
         Api::Method* get_NamedArguments{};
     } C_CustomAttributeData;
 
-    struct {
+    inline struct {
         Api::Method* get_MemberName{};
         Api::Method* get_MemberInfo{};
         Api::Method* get_TypedValue{};
     } C_CustomAttributeNamedArgument;
 
-    struct {
+    inline struct {
         Api::Class* klass{};
         Api::Method* get_Value{};
     } C_CustomAttributeTypedArgument;
 
-    struct ParameterInfo {
+    inline struct ParameterInfo {
         Api::Method* get_Attributes{};
         Api::Method* get_Name{};
         Api::Method* get_Type{};

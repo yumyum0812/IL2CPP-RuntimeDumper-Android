@@ -10,7 +10,7 @@
 
 
 namespace Finder {
-    Api::Image* FindImage(std::string_view name) {
+    inline Api::Image* FindImage(std::string_view name) {
         auto domain = Api::Domain::GetInstance();
         auto asms = domain->GetAssemblies();
         for (auto a : asms) {
@@ -21,7 +21,7 @@ namespace Finder {
         return nullptr;
     }
 
-    Api::Method* FindMethod(Api::Class* klass, std::string_view name, std::string_view rtName, const std::vector<std::string_view>& pNames) {
+    inline Api::Method* FindMethod(Api::Class* klass, std::string_view name, std::string_view rtName, const std::vector<std::string_view>& pNames) {
         if (!klass) return nullptr;
 
         auto methods = klass->GetMethods();
@@ -52,7 +52,7 @@ namespace Finder {
         return nullptr;
     }
 
-    Api::Method* FindMethodP(Api::Class* klass, std::string_view name, std::string_view rtName, const std::vector<std::string_view>& pNames) {
+    inline Api::Method* FindMethodP(Api::Class* klass, std::string_view name, std::string_view rtName, const std::vector<std::string_view>& pNames) {
         if (!klass) return nullptr;
 
         auto m = FindMethod(klass, name, rtName, pNames);
@@ -64,7 +64,7 @@ namespace Finder {
         return nullptr;
     }
 
-    Api::Method* FindMethodI(Api::Class* klass, std::string_view name, std::string_view rtName, const std::vector<std::string_view>& pNames) {
+    inline Api::Method* FindMethodI(Api::Class* klass, std::string_view name, std::string_view rtName, const std::vector<std::string_view>& pNames) {
         if (!klass) return nullptr;
 
         auto m = FindMethod(klass, name, rtName, pNames);

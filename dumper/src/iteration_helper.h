@@ -1,11 +1,11 @@
 #pragma once
-#include "log.h"
+#include "dumper_log.h"
 #include "finder.h"
 #include "api/object.h"
 
 
 namespace IterationHelper {
-    void IterateIList(Api::Object* obj, std::string_view tName, std::function<void(Api::Object* v)> iter) {
+    inline void IterateIList(Api::Object* obj, std::string_view tName, std::function<void(Api::Object* v)> iter) {
         Api::Class* klass = obj->GetClass();
 
         Api::Method* vGetCount = Finder::FindMethodI(klass, "get_Count", "System.Int32", {});
@@ -18,11 +18,11 @@ namespace IterationHelper {
         vGetItem = obj->GetVirtualMethod(vGetItem);
 
         if (!vGetCount) {
-            Log::Warn("get_Count is null for {}", klass->GetName());
+            DumperLog::Warn("get_Count is null for {}", klass->GetName());
             return;
         }
         if (!vGetItem) {
-            Log::Warn("get_Item is null for {}", klass->GetName());
+            DumperLog::Warn("get_Item is null for {}", klass->GetName());
             return;
         }
 
