@@ -109,7 +109,7 @@ You can add the following file to patch libil2cpp.so for specified offsets, byte
 ```
 
 ## Outputs
-Outputs are generated to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper/Dump/`
+Outputs will be generated to `/storage/emulated/0/Android/data/<PACKAGE>/files/RuntimeDumper/Dump/`
 
 ### Example output
 ```cs
