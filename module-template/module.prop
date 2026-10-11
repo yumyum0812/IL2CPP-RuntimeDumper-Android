@@ -2,6 +2,6 @@ id=il2cppdumper_miruku
 name=IL2CPP Runtime Dumper [Zygisk]
 version=0.1
 versionCode=1
-author=miruku123
+author=yumyum0812
 description=Zygisk IL2CPP runtime dumper
 minMagisk=24000

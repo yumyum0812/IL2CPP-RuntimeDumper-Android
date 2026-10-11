@@ -22,7 +22,7 @@ Download Zygisk module from release and install.
 #### Pattern 1
 1. Extract your game APK
 2. Insert `libdumper-inject.so` to your game's matching `lib/<ARCH>` folder
-3. Add following smali code to `onCreate` of main activity in your game
+3. Add following smali code to `onCreate` of main activity in your game (normally `com.unity3d.player.UnityPlayerActivity`)
 ```smali
 const-string v0, "dumper-inject"
 
