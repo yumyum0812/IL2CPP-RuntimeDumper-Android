@@ -16,9 +16,9 @@ Please use this project at your own risk. We accept no responsibility for any da
 - Dump const field values
 
 ## Installation
-### Method 1. By Zygisk module
+### Method 1. By Zygisk module (Root)
 Download Zygisk module from release and install.
-### Method 2. By modding APK
+### Method 2. By modding APK (Non-Root)
 #### Pattern 1
 1. Extract your game APK
 2. Insert `libdumper-inject.so` to your game's matching `lib/<ARCH>` folder
@@ -43,9 +43,9 @@ It should will be like this:
 1. Extract your game APK
 2. Replace `libmain.so` of your game's matching `lib/<ARCH>` folder
 3. Recompress + sign and install the modded APK
-### Method 3. By replacing games lib (ROOT)
+### Method 3. By replacing games lib (Root)
 1. Replace `libmain.so` of your game's `/data/app/<PACKAGE>/base.apk`'s folder + `/lib/<ARCH>/libmain.so`
-### Method 4. By injection
+### Method 4. By injection (Root)
 Inject `libdumper-inject.so` in your game by your library injector.
 
 ## Configuration
