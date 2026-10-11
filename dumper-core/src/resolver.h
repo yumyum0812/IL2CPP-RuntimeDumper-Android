@@ -153,6 +153,7 @@ inline bool InitApi(LibResolver& libRes, ApiResolver& res) {
     DumperLog::Debug("init: resolving library...");
     if (!libRes.Resolve()) {
         DumperLog::Debug("init: failed to resolve library");
+        return false;
     }
     
     DumperLog::Debug("init: resolving api...");

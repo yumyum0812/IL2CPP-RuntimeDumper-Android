@@ -1066,10 +1066,10 @@ void RunDumper() {
 
     auto dumperDir = fs::path(extDirS) / "RuntimeDumper";
     outDir = dumperDir / "Dump";
-    if (fs::exists(outDir)) {
-        fs::remove_all(outDir);
-        DumperLog::Debug("cleaned dir");
-    }
+    // if (fs::exists(outDir)) {
+    //     fs::remove_all(outDir);
+    //     DumperLog::Debug("cleaned dir");
+    // }
     
     if (!fs::exists(outDir) && !fs::create_directories(outDir)) {
         DumperLog::Error("cannot create dir: {}", outDir.c_str());
