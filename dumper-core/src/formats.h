@@ -1,55 +1,76 @@
 #pragma once
+#include <cctype>
 #include <string>
 #include <map>
 #include <format>
+#include "utils/str_util.h"
 
 namespace Formats {
-    inline const static std::map<char, std::string> charEscapes = {
-        {'\\', "\\\\"},
-        {'\n', "\\n"},
-        {'\0', "\\0"},
-        {'\a', "\\a"},
-        {'\f', "\\f"},
-        {'\n', "\\n"},
-        {'\r', "\\r"},
-        {'\t', "\\t"},
-        {'\v', "\\v"}
+    inline const static std::map<char16_t, std::string> charEscapes = {
+        {u'\\', "\\\\"},
+        {u'\n', "\\n"},
+        {u'\0', "\\0"},
+        {u'\a', "\\a"},
+        {u'\f', "\\f"},
+        {u'\n', "\\n"},
+        {u'\r', "\\r"},
+        {u'\t', "\\t"},
+        {u'\v', "\\v"}
     };
 
-    inline std::string FormatCharLiteral(uint16_t c) {
-        std::string out;
-        if (charEscapes.contains(c)) {
-            out += charEscapes.at(static_cast<char>(c));
-        } else if (c == '\'') {
-            out = "\\'";
-        } else if (c < 0x7F && std::iscntrl(c)) {
-            out = "\\x" + std::format("{:X}", c);
-        } else if ((c >= 0xD800 && c <= 0xDFFF) || (c >= 0xFDD0 && c <= 0xFDEF) || c == 0xFFFE || c == 0xFFFF) {
-            out = std::format("\\u{:04X}", c);
-        } else {
-            out = std::string(1, c);
-        }
+    inline std::string FormatCharLiteral(char16_t c) {
+        std::string out = [=]() -> std::string {
+            if (c == U'\'')
+                return "\\\'";
+
+            if (c <= 0xFF && std::iscntrl(static_cast<int>(c)))
+                return "\\u" + std::format("{:04X}", static_cast<uint16_t>(c));
+
+            if (c <= 0xFFFF) {
+                if (charEscapes.contains(c))
+                    return charEscapes.at(c);
+
+                if (c >= 0xFFFE)
+                    return "\\u" + std::format("{:04X}", static_cast<uint16_t>(c));
+                    
+                if (StrUtil::IsLowSurrogate(c) || StrUtil::IsHighSurrogate(c))
+                    return "\\u" + std::format("{:04X}", static_cast<uint16_t>(c));
+            }
+
+            return StrUtil::EncodeU8Char(static_cast<char32_t>(c));
+        }();
 
         return "'" + out + "'";
     }
 
-    inline std::string FormalStringLiteral(std::string_view input) {
+    inline std::string FormatStringLiteral(const std::vector<char16_t>& buffer) {
         std::string result;
-        for (char c : input) {
-            if (charEscapes.contains(c)) {
-                result += charEscapes.at(c);
-                continue;
-            }
-            if (std::iscntrl(c)) {
-                result += "\\x" + std::to_string(static_cast<int>(static_cast<unsigned char>(c)));
-                continue;
-            }
-            if (c == '"') {
+        StrUtil::DecodeU16(buffer, [&result](char32_t cp) {
+            if (cp == U'"') {
                 result += "\\\"";
-                continue;
+                return;
             }
-            result += c;
-        }
+
+            if (cp <= 0xFF && std::iscntrl(static_cast<int>(cp))) {
+                result += "\\u" + std::format("{:04X}", static_cast<uint16_t>(cp));
+                return;
+            }
+
+            if (cp <= 0xFFFF) {
+                if (charEscapes.contains(static_cast<char16_t>(cp))) {
+                    result += charEscapes.at(static_cast<char16_t>(cp));
+                    return;
+                }
+                if (cp >= 0xFFFE) {
+                    result += "\\u" + std::format("{:04X}", static_cast<uint16_t>(cp));
+                    return;
+                }
+            }
+
+            result += StrUtil::EncodeU8Char(cp);
+        }, [&result](char16_t c) {
+            result += "\\u" + std::format("{:04X}", static_cast<uint16_t>(c));
+        });
         return "\"" + result + "\"";
     }
 

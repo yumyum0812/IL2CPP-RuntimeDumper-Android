@@ -1,6 +1,6 @@
 #pragma once
 #include "functions.h"
-#include <string>
+#include <vector>
 
 namespace Api {
     struct String {
@@ -10,12 +10,12 @@ namespace Api {
             return Functions::string_new(cstr);
         }
 
-        std::u16string GetChars() {
+        std::vector<char16_t> GetChars() {
             auto s = Functions::string_chars(this);
             if (!s) return {};
             
             auto len = static_cast<size_t>(Functions::string_length(this));
-            return {s, len};
+            return std::vector<char16_t>(s, s + len);
         }
     };
 }
