@@ -1,5 +1,6 @@
 #pragma once
 
+#include <dlfcn.h>
 #include <jni.h>
 #include <xdl.h>
 #include <string>
@@ -47,8 +48,8 @@ namespace JniUtil {
         }
     };
 
-    JavaVM* GetJavaVM() {
-        void* handle = xdl_open("libart.so", RTLD_NOW | RTLD_GLOBAL);
+    inline JavaVM* GetJavaVM() {
+        void* handle = xdl_open("libart.so", XDL_DEFAULT);
         if (!handle) return nullptr;
 
         auto fn = reinterpret_cast<jint(*)(JavaVM**, jsize, jsize*)>(xdl_sym(handle, "JNI_GetCreatedJavaVMs", nullptr));
@@ -64,7 +65,7 @@ namespace JniUtil {
         return vm;
     }
 
-    jobject GetApplication(JNIEnv* env) {
+    inline jobject GetApplication(JNIEnv* env) {
         jclass activityThread = env->FindClass("android/app/ActivityThread");
         if (!activityThread)
             return nullptr;
@@ -90,7 +91,7 @@ namespace JniUtil {
         return application;
     }
 
-    std::string GetExternalFilesPath(JNIEnv* env, jobject context) {
+    inline std::string GetExternalFilesPath(JNIEnv* env, jobject context) {
         jclass contextClass = env->GetObjectClass(context);
         if (!contextClass) return {};
 
