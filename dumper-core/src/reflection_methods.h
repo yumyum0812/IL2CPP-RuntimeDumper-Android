@@ -27,6 +27,7 @@ namespace ReflectionMethods {
         Api::Method* GetField{};
         Api::Method* GetProperty{};
         Api::Method* GetInterfaces{};
+        Api::Method* GetArrayRank{};
     } C_Type;
 
     inline struct {

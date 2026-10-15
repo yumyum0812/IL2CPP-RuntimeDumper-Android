@@ -76,6 +76,13 @@ namespace ReflectionIniter {
                 {"System.String", "System.Reflection.BindingFlags"},
                 &C_Type.GetProperty
             );
+            FindReflMethod(
+                C_Type.klass,
+                "GetArrayRank",
+                "System.Int32",
+                {},
+                &C_Type.GetArrayRank
+            );
         }
 
         Api::Class* methodC = FindReflClass(corlib, "System.Reflection", "MethodBase");
