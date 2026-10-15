@@ -39,7 +39,7 @@ def main() -> int:
     so_dest_dir = tmp_module_dir / "zygisk"
 
     ver = _find_ver(template_dir / "module.prop")
-    module_dest = module_out_dir / f"{OUT_NAME}-{ver}-{variant}.zip"
+    module_dest = module_out_dir / f"{OUT_NAME}-v{ver}-{variant}.zip"
 
     if not template_dir.is_dir():
         print(f"template not found or not dir: {template_dir}")

@@ -182,7 +182,7 @@ def build(bc: Build, ec: Env, variant: str, abis: list[str]):
     build_dir = get_build_dir()
 
     for a in abis:
-        print_info(f"building for {variant.lower()} {a}")
+        print_info(f"building for '{variant.lower()}' abi '{a}'")
 
         build_dir_abi = os.path.join(build_dir, make_varname(variant, a))
         result = subprocess.run([ec.cmake_exe, "--build", build_dir_abi])
@@ -217,7 +217,7 @@ def main() -> int:
         
         cmd = commands.get(cmd_name)
         if cmd is not None:
-            print_info(f"executing command '{cmd_name}' for {variant.lower()} {", ".join(abis)}")
+            print_info(f"executing command '{cmd_name}' for variant '{variant.lower()}' abi {", ".join(f"'{abi}'" for abi in abis)}")
             cmd(bc, ec, variant, abis)
         else:
             raise WorkError(f"unknown command '{cmd_name}'")
