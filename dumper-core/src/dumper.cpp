@@ -65,12 +65,6 @@ static const std::unordered_map<int, std::string> typeAliases = {
     {TypeEnum::OBJECT, "object"},
 };
 
-static const std::unordered_map<int, std::string> typeSuffixes = {
-    {TypeEnum::SZARRAY, "[]"},
-    {TypeEnum::PTR, "*"},
-};
-
-
 static Config::DumperConfig config;
 static std::filesystem::path outDir;
 static LibResolver libRes;
@@ -78,16 +72,15 @@ static LibResolver libRes;
 static uintptr_t libBase = 0;
 static size_t structBoxSize = 0;
 
-
-static std::string FormatTypeName(Type* t, bool useRealName = false, bool forTypeof = false) {
+static std::string FormatTypeName(Type* t, bool useAlias = true, bool forTypeof = false) {
     if (!t) return "?";
-
+    
     auto klass = Class::FromType(t);
     auto tp = t->GetTypeEnum();
 
-    std::string res;
+    std::string pref;
 
-    if (!useRealName) {
+    if (useAlias) {
         if (auto it = typeAliases.find(tp); it != typeAliases.end()) {
             return it->second;
         }
@@ -95,48 +88,123 @@ static std::string FormatTypeName(Type* t, bool useRealName = false, bool forTyp
 
     auto outer = klass->GetDeclaringClass();
     if (outer)
-        res += FormatTypeName(outer->GetType(), useRealName) + ".";
+        pref += FormatTypeName(outer->GetType(), useAlias) + ".";
     
-    if (typeSuffixes.contains(tp)) {
+    if (tp == Api::TypeEnum::PTR) {
         auto ec = klass->GetElementClass();
         if (ec && ec != klass)
-            return res + FormatTypeName(ec->GetType(), useRealName) + typeSuffixes.at(tp);
+            return pref + FormatTypeName(ec->GetType(), useAlias) + "*";
+        else
+            return pref + "?*";
     }
 
+    if (tp == Api::TypeEnum::SZARRAY || tp == Api::TypeEnum::ARRAY) {
+        std::string suff;
+        
+        while (tp == Api::TypeEnum::SZARRAY || tp == Api::TypeEnum::ARRAY) {
+            if (tp == Api::TypeEnum::SZARRAY) {
+                suff += "[]";
+            } else {
+                int rank = 0;
+                bool ok = [&]() -> bool {
+                    if (!C_Type.GetArrayRank) return false;
+
+                    Object* to = t->GetObject();
+                    if (!to) return false;
+
+                    Method* vGetArrayRank = to->GetVirtualMethod(C_Type.GetArrayRank);
+                    if (!vGetArrayRank) return false;
+
+                    Object* rankB = vGetArrayRank->Invoke(to);
+                    if (!rankB) return false;
+
+                    rank = *(int*) rankB->Unbox();
+                    return true;
+                }();
+
+                if (ok) {
+                    suff += "[" + StrUtil::Repeat(",", rank - 1) + "]";
+                } else {
+                    suff += "[?]";
+                }
+            }
+
+            auto ec = klass->GetElementClass();
+            if (!ec || ec == klass) {
+                klass = nullptr;
+                break;
+            }
+            
+            klass = ec;
+            t = klass->GetType();
+            if (!t) {
+                klass = nullptr;
+                break;
+            }
+            tp = t->GetTypeEnum();
+        }
+
+        if (!t) {
+            return "?" + suff;
+        }
+
+        return FormatTypeName(t, useAlias) + suff;
+    }
 
     auto name = klass->GetName();
     auto isGeneric = klass->IsGeneric();
     auto isInflated = klass->IsInflated();
 
-    if (C_Array.GetValue && C_Type.GetGenericArguments && (isGeneric || isInflated)) {
+    if (C_Array.GetValue && C_Type.GetGenericArguments && (isGeneric || isInflated)) [&] {
         auto to = t->GetObject();
-        if (to) {
-            auto getGensV = to->GetVirtualMethod(C_Type.GetGenericArguments);
-            if (getGensV) {
-                auto args = (Array*) getGensV->Invoke(to);
-                if (args) {
-                    std::string pureName = StrUtil::SubBefore(name, "`");
+        if (!to) return;
 
-                    int len = args->GetLength();
+        auto getGensV = to->GetVirtualMethod(C_Type.GetGenericArguments);
+        if (!getGensV) return;
 
-                    if (!isInflated && forTypeof)
-                        return StrUtil::SubBefore(name, "`") + "<" + StrUtil::Repeat(",", len - 1) +  ">";
+        auto args = (Array*) getGensV->Invoke(to);
+        if (!args) return;
 
-                    std::vector<std::string> ps;
-                    for (int i = 0; i < len; i++) {
-                        auto p = C_Array.GetValue->Invoke(args, i);
-                        auto pt = Class::FromSystemType(p);
-                        auto ptC = pt->GetType();
-                        ps.push_back(FormatTypeName(ptC, useRealName));
-                    }
-                    
-                    return pureName + "<" + StrUtil::Join(ps, ", ") + ">";
-                }
-            }
+        std::string pureName = StrUtil::SubBefore(name, "`");
+
+        int len = args->GetLength();
+
+        if (!isInflated && forTypeof) {
+            name = StrUtil::SubBefore(name, "`") + "<" + StrUtil::Repeat(",", len - 1) +  ">";
+            return;
         }
-    }
 
-    return res + name;
+        std::vector<std::string> ps;
+        for (int i = 0; i < len; i++) {
+            auto pTO = C_Array.GetValue->Invoke(args, i);
+            if (!pTO) {
+                ps.push_back("?");
+                continue;
+            }
+
+            auto pT = Class::FromSystemType(pTO);
+            if (!pT) {
+                ps.push_back("?");
+                continue;
+            }
+
+            auto pC = pT->GetType();
+            ps.push_back(FormatTypeName(pC, useAlias));
+        }
+        
+        name = pureName + "<" + StrUtil::Join(ps, ", ") + ">";
+    }();
+
+    return pref + name;
+}
+
+static std::string FormatClassName(Class* klass, bool useAlias = true, bool forTypeof = false) {
+    if (!klass) return "?";
+
+    Type* t = klass->GetType();
+    if (!t) return "?";
+
+    return FormatTypeName(t, useAlias, forTypeof);
 }
 
 static std::string FormatTypeType(Class* klass) {
@@ -214,6 +282,7 @@ static std::string FormatMethodAccessor(Method* met) {
     };
 
     bool isReuse    = (flags & VTABLE_LAYOUT_MASK) == REUSE_SLOT;
+    bool isNewSlot  = (flags & VTABLE_LAYOUT_MASK) == NEW_SLOT;
     bool isStatic   = (flags & STATIC)       != 0;
     bool isAbstract = (flags & ABSTRACT)     != 0;
     bool isVirtual  = (flags & VIRTUAL)      != 0;
@@ -227,19 +296,21 @@ static std::string FormatMethodAccessor(Method* met) {
         out += it->second + " ";
     }
 
-    bool renderAbstract = isAbstract;
-    bool renderSealed   = isReuse   &&  isFinal && !isAbstract;
-    bool renderVirtual  = isVirtual && !isReuse && !isAbstract;
-    bool renderOverride = isVirtual &&  isReuse && !isAbstract;
-    bool renderStatic   = isStatic;
-    bool renderExtern   = isExtern;
-
-    if (renderAbstract) out += "abstract ";
-    if (renderSealed)   out += "sealed ";
-    if (renderVirtual)  out += "virtual ";
-    if (renderOverride) out += "override ";
-    if (renderStatic)   out += "static ";
-    if (renderExtern)   out += "extern ";
+    if (isStatic)
+        out += "static ";
+    if (isAbstract) {
+        out += "abstract ";
+        if (isReuse)
+            out += "override ";
+    } else if (isFinal) {
+        if (isReuse)
+            out += "sealed override ";
+    } else if (isVirtual) {
+        if (isNewSlot)
+            out += "virtual ";
+        else
+            out += "override ";
+    }
 
     return out;
 }
@@ -340,12 +411,10 @@ static std::string FormatObject(int typeEnum, Getter&& getter) {
         case STRING: {
             String* value = getter.template operator()<String*, false>();
 
-            if (!value)
-                return "null";
+            if (!value) return "null";
 
-            auto u16s = value->GetChars();
-            std::string s = StrUtil::U16ToU8(u16s);
-            out += Formats::FormalStringLiteral(s);
+            auto buf = value->GetChars();
+            out += Formats::FormatStringLiteral(buf);
         } break;
 
         case I1: appendInteger.template operator()<int8_t>(); break;
@@ -382,7 +451,7 @@ static std::string FormatObjectValue(Object* obj) {
 
     if (C_Type.klass && C_Type.klass->IsAssignableFrom(klass)) {
         auto tName = Class::FromSystemType(obj)->GetType();
-        return "typeof(" + FormatTypeName(tName, false, true) + ")";
+        return "typeof(" + FormatTypeName(tName, true, true) + ")";
     }
 
     if (klass->IsEnum())
@@ -605,12 +674,12 @@ static void DumpClass(Class* klass, std::ofstream& out) {
     }
     
     if (pKlass) {
-        extNames.push_back(FormatTypeName(pKlass->GetType()));
+        extNames.push_back(FormatClassName(pKlass));
     }
 
     auto ifaces = klass->GetInterfaces();
     for (int i = 0; i < ifaces.size(); i++) {
-        extNames.push_back(FormatTypeName(ifaces[i]->GetType()));
+        extNames.push_back(FormatClassName(ifaces[i]));
     }
 
     Object* tO = type->GetObject();
@@ -622,7 +691,7 @@ static void DumpClass(Class* klass, std::ofstream& out) {
         ext = " : " + StrUtil::Join(extNames, ", ");
     }
 
-    out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatTypeName(klass->GetType(), true) + ext + "\n{";
+    out << FormatTypeAccessor(klass) + FormatTypeType(klass) + FormatClassName(klass, false) + ext + "\n{";
     out << "\n";
 
     auto fields = klass->GetFields();
@@ -683,17 +752,18 @@ static void DumpClass(Class* klass, std::ofstream& out) {
             DumpMemberAttrs(pO, out);
         }();
 
-        auto fGet = p->GetGetMethod();
-        auto fSet = p->GetSetMethod();
+        auto pGet = p->GetGetMethod();
+        auto pSet = p->GetSetMethod();
 
-        auto fEith = fGet ? fGet : fSet;
+        auto fEith = pGet ? pGet : pSet;
         if (!fEith) continue;
+        auto pRT = fEith->GetReturnType();
 
         out << INDENT;
-        out << FormatMethodAccessor(fEith) + FormatTypeName(fEith->GetReturnType()) + " " + pName;
+        out << FormatMethodAccessor(fEith) + FormatTypeName(pRT) + " " + pName;
         out << " { ";
-        if (fGet) out << "get; ";
-        if (fSet) out << "set; ";
+        if (pGet) out << "get; ";
+        if (pSet) out << "set; ";
         out << "}";
         out << "\n";
     }
@@ -847,7 +917,7 @@ static void DumpClass(Class* klass, std::ofstream& out) {
                 auto p = C_Array.GetValue->Invoke(args, i);
                 auto pt = Class::FromSystemType(p);
 
-                pNames.push_back(FormatTypeName(pt->GetType()));
+                pNames.push_back(FormatClassName(pt));
             }
             
             out << "<";
