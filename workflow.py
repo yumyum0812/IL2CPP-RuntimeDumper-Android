@@ -1,11 +1,18 @@
-# requirements: python-dotenv
+# requirements
+# python-dotenv
 
 from dataclasses import dataclass
 import os
 import sys
 import json
-import dotenv
 import subprocess
+import argparse
+
+try:
+    import dotenv
+except ImportError as e:
+    print("module dotenv not found. please install python-dotenv")
+    raise SystemExit(1)
 
 ENV_NDK_HOME = "ANDROID_NDK_HOME"
 ENV_CMAKE_EXE = "CMAKE_EXECUTABLE"
@@ -35,13 +42,13 @@ class WorkError(Exception):
 
 
 def print_info(msg: str) -> None:
-    print(CLR_CLR + msg + CLR_CLR, file=sys.stderr)
+    print(CLR_CLR + "(*) " + msg + CLR_CLR, file=sys.stdout)
 
 def print_suc(msg: str) -> None:
-    print(CLR_GRN + msg + CLR_CLR, file=sys.stderr)
+    print(CLR_GRN + "(*) " + msg + CLR_CLR, file=sys.stderr)
 
 def print_err(msg: str) -> None:
-    print(CLR_RED + msg + CLR_CLR, file=sys.stderr)
+    print(CLR_RED + "(!) " + msg + CLR_CLR, file=sys.stderr)
 
 
 def get_project_dir() -> str:
@@ -108,18 +115,26 @@ def get_env() -> Env:
 def make_varname(variant: str, abi: str) -> str:
     return variant.lower() + "-" + abi
 
+def get_abis(bc: Build, abi: str | None) -> list[str]:
+    if abi:
+        if not abi in bc.abis:
+            raise WorkError(f"abi '{abi}' not found in config")
+        return [abi]
+    else:
+        return sorted(bc.abis)
 
-def configure(bc: Build, ec: Env, variant: str):
+
+def configure(bc: Build, ec: Env, variant: str, abis: list[str]):
     print_info("configuring...")
 
     project_dir = get_project_dir()
     build_dir = get_build_dir()
     cmake_toolchain = os.path.join(ec.ndk_home, "build/cmake/android.toolchain.cmake")
 
-    for abi in bc.abis:
-        print_info(f"configuring for {variant.lower()} {abi}")
+    for a in abis:
+        print_info(f"configuring for {variant.lower()} {a}")
 
-        build_dir_abi = os.path.join(build_dir, make_varname(variant, abi))
+        build_dir_abi = os.path.join(build_dir, make_varname(variant, a))
         result = subprocess.run(
             [
                 ec.cmake_exe,
@@ -131,11 +146,11 @@ def configure(bc: Build, ec: Env, variant: str):
                 f"-DCMAKE_MAKE_PROGRAM={ec.ninja_exe}",
                 f"-DCMAKE_SYSTEM_NAME=Android",
                 f"-DCMAKE_SYSTEM_VERSION={bc.min_api}",
-                f"-DANDROID_ABI={abi}",
+                f"-DANDROID_ABI={a}",
                 f"-DANDROID_NDK={ec.ndk_home}",
                 f"-DANDROID_PLATFORM=android-{bc.min_api}",
                 f"-DANDROID_STL=c++_static",
-                f"-DCMAKE_ANDROID_ARCH_ABI={abi}",
+                f"-DCMAKE_ANDROID_ARCH_ABI={a}",
                 f"-DCMAKE_ANDROID_NDK={ec.ndk_home}",
 
                 f"-DCMAKE_EXPORT_COMPILE_COMMANDS=TRUE",
@@ -147,12 +162,12 @@ def configure(bc: Build, ec: Env, variant: str):
         if result.returncode != 0:
             raise WorkError(f"CMake failed with code {result.returncode}")
 
-def clean(bc: Build, ec: Env, variant: str):
+def clean(bc: Build, ec: Env, variant: str, abis: list[str]):
     project_dir = get_project_dir()
     build_dir = get_build_dir()
 
-    for abi in bc.abis:
-        build_dir_abi = os.path.join(build_dir, make_varname(variant, abi))
+    for a in abis:
+        build_dir_abi = os.path.join(build_dir, make_varname(variant, a))
         result = subprocess.run(
             [
                 ec.cmake_exe,
@@ -163,26 +178,30 @@ def clean(bc: Build, ec: Env, variant: str):
         if result.returncode != 0:
             raise WorkError(f"CMake failed with code {result.returncode}")
 
-def build(bc: Build, ec: Env, variant: str):
+def build(bc: Build, ec: Env, variant: str, abis: list[str]):
     build_dir = get_build_dir()
 
-    for abi in bc.abis:
-        print_info(f"building for {variant.lower()} {abi}")
+    for a in abis:
+        print_info(f"building for {variant.lower()} {a}")
 
-        build_dir_abi = os.path.join(build_dir, make_varname(variant, abi))
+        build_dir_abi = os.path.join(build_dir, make_varname(variant, a))
         result = subprocess.run([ec.cmake_exe, "--build", build_dir_abi])
         if result.returncode != 0:
             raise WorkError(f"CMake failed with code {result.returncode}")
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=["configure", "clean", "build"], help="command to execute (configure, clean, build)")
+    parser.add_argument("--release", action="store_true", help="build release build")
+    parser.add_argument("--target", required=False, help="target module")
+    parser.add_argument("--abi", required=False, help="target arch (default all)")
+    return parser.parse_args()
 
 def main() -> int:
-    args = sys.argv
+    args = parse_args()
 
     try:
-        if len(args) < 2:
-            raise WorkError("no command given!")
-
-        cmd_name = args[1]
+        cmd_name = args.command
 
         bc = get_build()
         ec = get_env()
@@ -193,13 +212,13 @@ def main() -> int:
             "build": build,
         }
 
-        is_release = "--release" in args[2:]
-        variant = "Release" if is_release else "Debug"
+        variant = "Release" if args.release else "Debug"
+        abis = get_abis(bc, args.abi)
         
         cmd = commands.get(cmd_name)
         if cmd is not None:
-            print_info(f"executing command '{cmd_name}'...")
-            cmd(bc, ec, variant)
+            print_info(f"executing command '{cmd_name}' for {variant.lower()} {", ".join(abis)}")
+            cmd(bc, ec, variant, abis)
         else:
             raise WorkError(f"unknown command '{cmd_name}'")
     except WorkError as e:
