@@ -65,6 +65,16 @@ class Api::Functions {
             if (!fn) {
                 DumperLog::Assert("fn == nullptr", "call to uninitialize api call: {}", _name);
             }
+
+            // DumperLog::Debug("calling: {}", _name);
+            // if constexpr (not std::is_void_v<R>) {
+            //     R r = fn(std::forward<A>(a)...);
+            //     DumperLog::Debug("call ok: {}", _name);
+            //     return r;
+            // } else {
+            //     fn(std::forward<A>(a)...);
+            //     DumperLog::Debug("call ok: {}", _name);
+            // }
             return fn(std::forward<A>(a)...);
         }
 
