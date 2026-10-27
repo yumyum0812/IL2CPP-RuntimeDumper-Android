@@ -23,9 +23,6 @@ namespace Formats {
             if (c == U'\'')
                 return "\\\'";
 
-            if (c <= 0xFF && std::iscntrl(static_cast<int>(c)))
-                return "\\u" + std::format("{:04X}", static_cast<uint16_t>(c));
-
             if (c <= 0xFFFF) {
                 if (charEscapes.contains(c))
                     return charEscapes.at(c);
@@ -36,6 +33,9 @@ namespace Formats {
                 if (StrUtil::IsLowSurrogate(c) || StrUtil::IsHighSurrogate(c))
                     return "\\u" + std::format("{:04X}", static_cast<uint16_t>(c));
             }
+
+            if (c <= 0xFF && std::iscntrl(static_cast<int>(c)))
+                return "\\u" + std::format("{:04X}", static_cast<uint16_t>(c));
 
             return StrUtil::EncodeU8Char(static_cast<char32_t>(c));
         }();
@@ -51,11 +51,6 @@ namespace Formats {
                 return;
             }
 
-            if (cp <= 0xFF && std::iscntrl(static_cast<int>(cp))) {
-                result += "\\u" + std::format("{:04X}", static_cast<uint16_t>(cp));
-                return;
-            }
-
             if (cp <= 0xFFFF) {
                 if (charEscapes.contains(static_cast<char16_t>(cp))) {
                     result += charEscapes.at(static_cast<char16_t>(cp));
@@ -65,6 +60,11 @@ namespace Formats {
                     result += "\\u" + std::format("{:04X}", static_cast<uint16_t>(cp));
                     return;
                 }
+            }
+
+            if (cp <= 0xFF && std::iscntrl(static_cast<int>(cp))) {
+                result += "\\u" + std::format("{:04X}", static_cast<uint16_t>(cp));
+                return;
             }
 
             result += StrUtil::EncodeU8Char(cp);

@@ -23,7 +23,7 @@ CLR_RED = "\033[31m"
 CLR_GRN = "\033[32m"
 CLR_CLR = "\033[0m"
 
-dotenv.load_dotenv()
+dotenv.load_dotenv(override=True)
 
 
 @dataclass

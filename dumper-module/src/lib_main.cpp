@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <fstream>
 #include <string>
 #include <thread>
@@ -142,7 +143,22 @@ public:
     void preAppSpecialize(zygisk::AppSpecializeArgs* args) override {
         matched = false;
 
-        if (!args || !args->nice_name || !api || !env) return;
+        if (!args) return;
+        if (!args->nice_name) return;
+        if (!api) return;
+        if (!env) return;
+
+        // ModuleLog::Debug("{} {} {} {} {}",
+        //     args->uid,
+        //     args->is_child_zygote ? *args->is_child_zygote : false,
+        //     args->is_child_zygote != nullptr,
+        //     args->is_top_app ? *args->is_top_app : false,
+        //     args->is_top_app != nullptr
+        // );
+
+        if (args->uid < 10000) return; // SYSTEM APP
+        if (args->is_child_zygote != nullptr && *args->is_child_zygote) return; // BACKGROUND
+        if (args->is_top_app != nullptr && !(*args->is_top_app))  return; // BACKGROUND 2
 
         const char* raw = env->GetStringUTFChars(args->nice_name, nullptr);
         if (!raw) {
@@ -175,7 +191,10 @@ public:
 
         close(companionFd);
 
-        if (!matched) return;
+        if (!matched) {
+            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
 
         ModuleLog::Info("app matched: {}", processName);
     }

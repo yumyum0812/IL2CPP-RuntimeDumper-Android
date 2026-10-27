@@ -939,10 +939,7 @@ static void DumpClass(Class* klass, std::ofstream& out) {
     out.flush();
 }
 
-static void DumpAssembly(Assembly* a, std::ofstream& out) {
-    Image* img = a->GetImage();
-    if (!img) return;
-    
+static void DumpImage(Image* img, std::ofstream& out) {
     DumperLog::Debug("dumping assembly: {}", img->GetName());
 
     auto klasses = img->GetClasses();
@@ -953,12 +950,10 @@ static void DumpAssembly(Assembly* a, std::ofstream& out) {
     out.flush();
 }
 
-static void DumpAssemblies(const std::vector<Assembly*> asms, std::ofstream& out) {
-    for (auto a : asms) {
-        Image* img = a->GetImage();
-        if (!img) continue;
-        
-        out << "// Assembly: ";
+static void DumpImages(const std::vector<Image*> images, std::ofstream& out) {
+    for (size_t i = 0; i < images.size(); ++i) {
+        Image* img = images[i];
+        out << "// Image " << i << ": ";
         out << img->GetName();
         out << "\n";
     }
@@ -966,10 +961,12 @@ static void DumpAssemblies(const std::vector<Assembly*> asms, std::ofstream& out
     out << "\n";
     out.flush();
 
-    for (auto a : asms) {
-        DumpAssembly(a, out);
+    for (auto img : images) {
+        DumpImage(img, out);
         out.flush();
     }
+    
+    out.flush();
 }
 
 static void DumperMain() {
@@ -992,7 +989,7 @@ static void DumperMain() {
             DumperLog::Error("attach returned null");
             return;
         }
-        DumperLog::Error("attached to thread");
+        DumperLog::Debug("attached to thread");
     }
     DumperLog::Debug("thread: 0x{:X}", (uintptr_t) thr);
 
@@ -1017,17 +1014,23 @@ static void DumperMain() {
     }
 
     auto asms = domain->GetAssemblies();
-    DumperLog::Debug("assemblies: {:d}", asms.size());
+    std::vector<Image*> images = {};
+    for (auto a : asms) {
+        Image* img = a->GetImage();
+        if (!img) continue;
+
+        images.push_back(img);
+    }
+
+    DumperLog::Debug("assemblies: {:d}", images.size());
 
     if (config.filterAssembly) {
-        std::erase_if(asms, [&](Assembly* item) {
-            Image* img = item->GetImage();
-            if (!img) return true;
-
-            return config.assmblyFilter.find(img->GetName()) == config.assmblyFilter.end();
+        std::erase_if(images, [&](Image* item) {
+            auto name = item->GetName();
+            return config.assmblyFilter.find(name) == config.assmblyFilter.end();
         });
 
-        DumperLog::Debug("filtered assemblies: {:d}", asms.size());
+        DumperLog::Debug("filtered assemblies: {:d}", images.size());
     }
 
     DumperLog::Debug("dumping...");
@@ -1040,14 +1043,14 @@ static void DumperMain() {
     if (!config.splitDump) {
         std::ofstream out(outDir / "dump.cs", std::ios::trunc);
 
-        DumpAssemblies(asms, out);
+        DumpImages(images, out);
+        
+        out.flush();
+        out.close();
     } else {
         fs::path dumpDir = outDir / "DumpCs";
 
-        for (auto a : asms) {
-            Image* img = a->GetImage();
-            if (!img) continue;
-
+        for (auto img : images) {
             if (!fs::exists(dumpDir) && !fs::create_directories(dumpDir)) {
                 DumperLog::Debug("cannot create dir: {}", dumpDir.c_str());
                 continue;
@@ -1057,7 +1060,9 @@ static void DumperMain() {
             StrUtil::EraseSuffix(asmName, ".dll");
             
             std::ofstream out(dumpDir / (asmName + ".cs"), std::ios::trunc);
-            DumpAssemblies({a}, out);
+            DumpImages({img}, out);
+            out.flush();
+            out.close();
         }
     }
 
